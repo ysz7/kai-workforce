@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+"""Fail if non-Latin script leaks into the codebase.
+
+Mixed-language identifiers and log keys are ungreppable and undeliverable to
+another developer or model, and Cyrillic table and column names break drivers
+and encodings. The rule is cheap from the first commit and expensive to
+introduce halfway.
+
+Runtime *data* - task goals, memory contents, report text - may be in any
+language. That is why only source and schema files are scanned, and why
+`dev-assets/` (the internal planning notes) is excluded.
+"""
+
+from __future__ import annotations
+
+import sys
+import unicodedata
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+SCANNED_SUFFIXES = {".py", ".sql", ".yaml", ".yml", ".toml", ".md", ".cfg", ".ini", ".mako"}
+
+EXCLUDED_DIRS = {
+    ".git",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".pytest_cache",
+    ".ruff_cache",
+    "dev-assets",  # internal planning notes, explicitly allowed to be in Russian
+    "node_modules",
+    "dist",
+    "build",
+}
+
+#: Scripts that are allowed to appear. Everything else is a policy violation.
+ALLOWED_SCRIPTS = ("LATIN", "COMMON", "INHERITED")
+
+
+def _is_allowed(char: str) -> bool:
+    if char.isascii():
+        return True
+    try:
+        name = unicodedata.name(char)
+    except ValueError:
+        # Unnamed control or private-use character: not text we want in sources.
+        return False
+    return name.split()[0] in ALLOWED_SCRIPTS
+
+
+def scan(root: Path) -> list[tuple[Path, int, str]]:
+    violations: list[tuple[Path, int, str]] = []
+    for path in root.rglob("*"):
+        if path.suffix not in SCANNED_SUFFIXES or not path.is_file():
+            continue
+        if any(part in EXCLUDED_DIRS for part in path.parts):
+            continue
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            offending = {c for c in line if not _is_allowed(c)}
+            if offending:
+                violations.append(
+                    (path.relative_to(root), number, "".join(sorted(offending)))
+                )
+    return violations
+
+
+def main() -> int:
+    violations = scan(REPO_ROOT)
+    if not violations:
+        print("English-only check passed.")
+        return 0
+    print("English-only check failed: non-Latin characters found in source files.")
+    for path, number, chars in violations:
+        print(f"  {path}:{number}: {chars}")
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
