@@ -178,3 +178,46 @@ def test_an_id_that_is_not_an_id_is_reported_plainly(monkeypatch, tmp_path) -> N
         assert result.exit_code == 1
     finally:
         get_settings.cache_clear()
+
+
+def test_tools_shows_the_level_each_one_reaches_the_world_at(monkeypatch, tmp_path) -> None:
+    """Phase 5: the hierarchy is not a claim in a prompt, it is printed per tool."""
+    from app.config.settings import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("KAI_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("KAI_WORKSPACE_DIR", str(tmp_path / "workspace"))
+    try:
+        result = runner.invoke(app, ["tools"])
+        assert result.exit_code == 0
+        assert "COMPUTER_USE" in result.output
+        assert "BROWSER" in result.output
+        assert "operator" in result.output
+    finally:
+        get_settings.cache_clear()
+
+
+def test_stop_can_be_pulled_and_released_from_a_second_terminal(
+    monkeypatch, tmp_path
+) -> None:
+    """It is a file precisely so this works while the first terminal is busy."""
+    from app.config.settings import get_settings
+    from infrastructure.computer.stop import FileStopSignal
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("KAI_DATA_DIR", str(tmp_path))
+    try:
+        stopped = runner.invoke(app, ["stop", "--reason", "wrong window"])
+        assert stopped.exit_code == 0
+        signal = FileStopSignal(get_settings().stop_file_path)
+        assert signal.engaged()
+        assert signal.reason == "wrong window"
+
+        released = runner.invoke(app, ["stop", "--clear"])
+        assert released.exit_code == 0
+        assert not signal.engaged()
+
+        again = runner.invoke(app, ["stop", "--clear"])
+        assert "was not stopped" in again.output
+    finally:
+        get_settings.cache_clear()

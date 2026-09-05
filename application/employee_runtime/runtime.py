@@ -121,6 +121,10 @@ class EmployeeRuntime:
                 plan,
                 self._deps.system_prompt,
                 state.verifier_feedback,
+                interfaces=tuple(
+                    spec.interface_level
+                    for spec in self._deps.tools.list_specs(self._definition)
+                ),
             ),
             cost_usd=state.transcript.cost_usd,
         )

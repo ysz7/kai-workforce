@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from domain.computer.interfaces import InterfaceLevel
 from domain.tools.models import ToolResult, ToolSpec
 
 
@@ -19,11 +20,13 @@ class FakeTool:
         handler: Callable[[dict[str, Any]], ToolResult] | None = None,
         raises: Exception | None = None,
         description: str = "A tool that exists for the test.",
+        interface_level: InterfaceLevel = InterfaceLevel.API,
     ) -> None:
         self._spec = ToolSpec(
             name=name,
             description=description,
             json_schema={"type": "object", "properties": {}},
+            interface_level=interface_level,
         )
         self._result = result or ToolResult.ok(value="ok")
         self._handler = handler

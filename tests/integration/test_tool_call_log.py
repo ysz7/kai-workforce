@@ -71,3 +71,33 @@ async def test_a_credential_is_masked_on_the_way_into_the_store(call_log) -> Non
 
     stored = (await call_log.list_for_task(task_id))[0]
     assert stored.input_data == {"api_key": "***"}
+
+
+async def test_the_interface_level_survives_a_round_trip(call_log) -> None:
+    """A trace read months later must still say how the work reached the world."""
+    from domain.computer.interfaces import InterfaceLevel
+
+    task_id = uuid4()
+    await call_log.record(
+        ToolCallRecord(
+            tool="computer.click",
+            success=True,
+            task_id=task_id,
+            interface=InterfaceLevel.COMPUTER_USE,
+        )
+    )
+
+    stored = await call_log.list_for_task(task_id)
+
+    assert stored[0].interface is InterfaceLevel.COMPUTER_USE
+
+
+async def test_a_call_that_says_nothing_about_its_interface_is_a_direct_call(
+    call_log,
+) -> None:
+    from domain.computer.interfaces import InterfaceLevel
+
+    task_id = uuid4()
+    await call_log.record(call(task_id=task_id))
+
+    assert (await call_log.list_for_task(task_id))[0].interface is InterfaceLevel.API

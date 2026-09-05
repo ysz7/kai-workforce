@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import structlog
 
-from application.employee_runtime.json_output import extract_object
 from application.employee_runtime.prompts import render
 from domain.capabilities.models import CapabilityRequirement
 from domain.employees.definition import EmployeeDefinition
 from domain.errors import PlanningError
+from domain.llm.json_output import extract_object
 from domain.llm.models import LLMRequest, Message, RoutingHints, TaskKind
 from domain.llm.protocols import LLM
 from domain.tasks.plan import PlanStep, TaskPlan

@@ -12,10 +12,12 @@ and give KAI a task.
 
 ## Status
 
-**Phase 4 - Capability / Tool Layer.** Employees do things now: read and sort
-files inside one working directory, search the web, open a page and read it, run
-a short program under limits. Anything irreversible - overwriting a file,
-running generated code - waits for you to say yes. Phase 5 adds Computer Use.
+**Phase 5 - Computer Use.** Employees do things now: read and sort files inside
+one working directory, search the web, open a page and read it, run a short
+program under limits - and, when none of that reaches the thing that has to be
+done, operate it on the screen. Anything irreversible - overwriting a file,
+running generated code, touching your desktop - waits for you to say yes.
+Phase 6 adds the local interface.
 
 See `dev-assets/implementation-plan.md` for the full roadmap.
 
@@ -81,6 +83,60 @@ browser engine for a workforce that only reads files:
 ```bash
 uv sync --extra browser && uv run playwright install chromium
 ```
+
+## Operating a screen
+
+Some interfaces have no API and nothing to address by structure - a canvas, an
+embedded viewer, a control that only answers to a mouse. For those there is a
+screen, and one rule around it: **use the most direct way in that exists.**
+
+```
+API  ->  integration  ->  browser  ->  Computer Use  ->  desktop
+```
+
+That order is not advice in a prompt. Every tool declares which rung it is on,
+`kai tools` prints it, the choice is logged before the first step, and each call
+is stored with the level it went through - so a run that clicked on a picture of
+a button can be asked why afterwards. See
+[ADR 0005](docs/adr/0005-the-interface-hierarchy-is-a-property-of-the-tool.md).
+
+The loop the tools are built for is **look, act, check**. `computer.screen`
+shows the screenshot to a vision model and answers with coordinates - the only
+place a click may get one. Every action takes an optional `expect` and confirms
+it by looking again, so the result reports what the screen showed rather than
+that the click was issued.
+
+```bash
+uv run kai run-task --employee operator "Open file:///.../keypad.html and enter the code 4 7 2, then press OK."
+uv run kai stop --reason "wrong window"   # from any terminal, at any moment
+uv run kai stop --clear
+```
+
+`kai stop` writes a file that every action on a screen reads before it happens,
+so it works from a second terminal while the run has the screen, and a stop set
+while nothing is running still holds when the next one starts.
+
+### The desktop
+
+Driving the page the platform opened comes with the browser tools. Driving *your
+machine* is separate, off by default, and confined:
+
+```bash
+uv sync --extra desktop
+export KAI_FLAGS__COMPUTER_USE=true
+export KAI_COMPUTER_ALLOWED_APPLICATIONS='["Preview"]'
+export KAI_COMPUTER_ALLOWED_REGION=1440x820+0+80
+```
+
+An empty application list means the desktop is off limits entirely - acting on
+the machine is opt-in per application, the way files are opt-in per directory -
+and "the platform could not tell what is in front" is a refusal, not a shrug.
+Every desktop action also waits for you: `desktop.*` tools are irreversible by
+declaration, so the gate asks each time.
+
+With computer use off, every scenario that has an API or a browser path keeps
+working. They are different rungs of the same ladder, not the same tool with a
+switch.
 
 ### Adding a tool
 

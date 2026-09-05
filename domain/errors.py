@@ -104,6 +104,14 @@ class LimitExceededError(ExecutionError):
         self.kind = kind
 
 
+class StopRequestedError(ExecutionError):
+    """The user pulled the brake while the platform was acting on the machine."""
+
+
+class ComputerUseError(ExecutionError):
+    """An action on a screen could not be carried out."""
+
+
 class PlanningError(ExecutionError):
     """The model did not produce a usable plan."""
 

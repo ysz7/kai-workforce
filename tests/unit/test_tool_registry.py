@@ -59,14 +59,21 @@ def test_re_registering_a_name_replaces_the_tool(registry) -> None:
 
 def test_every_employee_declares_tools_that_exist(tmp_path) -> None:
     """A typo in a declaration is silent otherwise: the employee simply never acts."""
+    from domain.computer.models import Surface
     from infrastructure.employees.yaml_registry import YamlEmployeeRegistry
     from infrastructure.tools.builtin import build_registry
     from tests.fakes.browser import FakeBrowser, FakeSearchEngine
+    from tests.fakes.computer import FakeComputer, FakeScreenReader
 
     registry = build_registry(
         workspace_root=tmp_path / "workspace",
         search_engine=FakeSearchEngine,
         browser=FakeBrowser,
+        # Both surfaces, so a declaration naming a desktop tool is checked too.
+        computers=lambda: [
+            (FakeComputer(surface=surface), FakeScreenReader)
+            for surface in (Surface.BROWSER, Surface.DESKTOP)
+        ],
     )
     available = {spec.name for spec in registry.list_specs(user("*"))}
     unknown = {

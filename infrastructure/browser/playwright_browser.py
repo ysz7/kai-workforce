@@ -51,6 +51,16 @@ class PlaywrightBrowser:
 
     # --- Lifecycle ------------------------------------------------------------
 
+    async def page(self) -> Any:
+        """The live page, for a component that drives it rather than reads it.
+
+        `PlaywrightComputer` clicks and types in the page this browser already
+        opened - the same tab the employee has been reading, which is the point:
+        two engines side by side would show the model one page and act on
+        another.
+        """
+        return await self._ensure_page()
+
     async def _ensure_page(self) -> Any:
         if self._page is not None:
             return self._page

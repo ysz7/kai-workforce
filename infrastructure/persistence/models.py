@@ -194,6 +194,11 @@ class ToolCallRow(Base):
     success: Mapped[bool] = mapped_column(nullable=False, default=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: Which level of the interface hierarchy the call went through. Stored so
+    #: "why did it drive a screen rather than call something" is answerable from
+    #: the trace months later, without re-deriving it from a tool declaration
+    #: that may since have changed.
+    interface: Mapped[str] = mapped_column(String(16), nullable=False, default="API")
     created_at: Mapped[datetime] = mapped_column(nullable=False, default=_utcnow)
 
 

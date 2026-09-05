@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from domain.computer.interfaces import InterfaceLevel
 from domain.errors import StorageError, StorageNotInitializedError
 from domain.tools.telemetry import ToolCallRecord
 from infrastructure.persistence.models import ToolCallRow
@@ -27,8 +28,17 @@ def _to_record(row: ToolCallRow) -> ToolCallRecord:
         input_data=row.input or {},
         output=row.output or {},
         error=row.error,
+        interface=_interface(row.interface),
         created_at=created if created.tzinfo else created.replace(tzinfo=UTC),
     )
+
+
+def _interface(raw: str | None) -> InterfaceLevel:
+    """A row written by an older version, or by a level since renamed, still reads."""
+    try:
+        return InterfaceLevel(raw or InterfaceLevel.API)
+    except ValueError:
+        return InterfaceLevel.API
 
 
 class SqliteToolCallLog:
@@ -60,6 +70,7 @@ class SqliteToolCallLog:
                     success=safe.success,
                     error=safe.error,
                     latency_ms=safe.latency_ms,
+                    interface=safe.interface.value,
                     created_at=safe.created_at,
                 )
             )

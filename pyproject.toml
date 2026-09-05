@@ -21,6 +21,11 @@ dependencies = [
 # not download a browser engine to install the platform.
 # uv sync --extra browser && uv run playwright install chromium
 browser = ["playwright>=1.48"]
+# The native desktop driver is a separate extra from the browser one, and off by
+# a flag as well: installing the platform must not install something that can
+# move the user's mouse.
+# uv sync --extra desktop
+desktop = ["pyautogui>=0.9.54"]
 
 [project.scripts]
 kai = "app.cli.main:app"

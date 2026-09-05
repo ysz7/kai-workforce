@@ -17,6 +17,13 @@ employee use this tool at all, does this particular call need a human, and what
 did it cost. Permission first, because refusing an unknown tool is cheaper than
 asking about it; approval second, because a question the user answers is only
 worth asking for a call that would otherwise happen.
+
+**The interface hierarchy is decided from what the employee has, and recorded.**
+The tools an employee is allowed to use are what say whether it can reach the
+world through an API, a browser or a screen, so the choice is made here, once,
+from `list_specs` - logged before the first step, stated to the model, and
+written against every call. A trace can then answer why a run clicked on a
+picture of a button instead of calling something.
 """
 
 from __future__ import annotations
@@ -30,6 +37,7 @@ import structlog
 from application.employee_runtime.approvals import ApprovalGate
 from application.employee_runtime.transcript import Transcript
 from domain.capabilities.models import CapabilityRequirement
+from domain.computer.interfaces import InterfaceLevel, describe, select
 from domain.employees.definition import EmployeeDefinition
 from domain.employees.limits import ExecutionLimits, LimitKind
 from domain.errors import PermissionDeniedError, ToolNotFoundError
@@ -98,6 +106,16 @@ class Executor:
         """
         started = self._clock()
         specs = self._tools.list_specs(definition)
+        choice = select(spec.interface_level for spec in specs)
+        if choice is not None:
+            log.info(
+                "interface.selected",
+                task_id=str(task.id),
+                employee=definition.name,
+                level=choice.level.value,
+                reason=choice.reason,
+                available=[level.value for level in choice.available],
+            )
 
         while True:
             exceeded = self._limits.exceeded_by(
@@ -140,7 +158,7 @@ class Executor:
             )
             for call in response.tool_calls:
                 result = await self._invoke(call, definition, task)
-                observation = self._observe(transcript.steps, call, result)
+                observation = self._observe(transcript.steps, call, result, definition)
                 transcript = transcript.with_observation(observation).with_message(
                     Message.tool(observation.summary, call.id)
                 )
@@ -176,10 +194,16 @@ class Executor:
 
         if not result.latency_ms:
             result = replace(result, latency_ms=int((self._clock() - started) * 1000))
-        await self._record(task, call, result)
+        await self._record(task, call, result, tool.spec.interface_level)
         return result
 
-    async def _record(self, task: Task, call: ToolCallRequest, result: ToolResult) -> None:
+    async def _record(
+        self,
+        task: Task,
+        call: ToolCallRequest,
+        result: ToolResult,
+        interface: InterfaceLevel = InterfaceLevel.API,
+    ) -> None:
         """Account for the call. Never at the cost of the task itself."""
         if self._call_log is None:
             return
@@ -193,6 +217,7 @@ class Executor:
                     input_data=call.arguments,
                     output=result.output,
                     error=result.error,
+                    interface=interface,
                 )
             )
         except Exception as error:  # telemetry is not worth failing a run over
@@ -200,7 +225,13 @@ class Executor:
 
     # --- Observing ------------------------------------------------------------
 
-    def _observe(self, step: int, call: ToolCallRequest, result: ToolResult) -> Observation:
+    def _observe(
+        self,
+        step: int,
+        call: ToolCallRequest,
+        result: ToolResult,
+        definition: EmployeeDefinition,
+    ) -> Observation:
         """Interpret what just happened, explicitly, before deciding anything."""
         # Redacted here, not at the log: this summary goes back into the
         # transcript, which is persisted and sent to the model on the next step.
@@ -212,16 +243,32 @@ class Executor:
         else:
             summary = f"{call.name} returned: {output}"
 
+        interface = self._interface_of(call.name, definition)
         observation = Observation(
             step=step,
             summary=summary,
             succeeded=result.success,
-            details={"tool": call.name, "arguments": redact(call.arguments)},
+            details={
+                "tool": call.name,
+                "arguments": redact(call.arguments),
+                "interface": interface.value,
+            },
         )
         log.info(
-            "task.observed", step=step, tool=call.name, succeeded=result.success
+            "task.observed",
+            step=step,
+            tool=call.name,
+            interface=interface.value,
+            succeeded=result.success,
         )
         return observation
+
+    def _interface_of(self, name: str, definition: EmployeeDefinition) -> InterfaceLevel:
+        """How this call reached the world. A refused call reached it not at all."""
+        try:
+            return self._tools.get(name, definition).spec.interface_level
+        except (ToolNotFoundError, PermissionDeniedError):
+            return InterfaceLevel.API
 
     # --- Fallbacks ------------------------------------------------------------
 
@@ -244,6 +291,7 @@ class Executor:
         plan: TaskPlan | None,
         system_prompt: str,
         feedback: tuple[str, ...] = (),
+        interfaces: tuple[InterfaceLevel, ...] = (),
     ) -> tuple[Message, ...]:
         """The transcript a fresh run starts from."""
         system = system_prompt or f"You are a {definition.role.title}."
@@ -251,6 +299,12 @@ class Executor:
             system += "\n\nYour standing goals:\n" + "\n".join(
                 f"- {goal.text}" for goal in definition.goals
             )
+        # Told to the model in the same terms the trace records it in, and only
+        # when it has a choice to make: an employee with one level has no
+        # hierarchy to respect, and a paragraph about one is noise.
+        ladder = describe(interfaces)
+        if ladder:
+            system += f"\n\n{ladder}"
 
         instruction = f"# Task\n\n{task.goal}"
         if plan and not plan.is_empty:

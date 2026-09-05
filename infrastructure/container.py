@@ -10,6 +10,7 @@ That keeps `infrastructure` from importing `app`, which owns configuration.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from functools import cached_property
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
@@ -17,6 +18,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from domain.approvals.protocols import ApprovalRepository, ApprovalService
 from domain.browser.protocols import Browser
 from domain.capabilities.models import CapabilityRequirement
+from domain.computer.constraints import ComputerConstraints
+from domain.computer.models import Region
+from domain.computer.protocols import Computer, ScreenReader, StopSignal
 from domain.employees.protocols import EmployeeRegistry
 from domain.llm.models import RoutingHints, TaskKind
 from domain.llm.protocols import LLM, ModelRouter
@@ -41,10 +45,21 @@ from infrastructure.tools.builtin import build_registry
 
 
 class Container:
-    def __init__(self, settings: RuntimeSettings, *, in_memory: bool = False) -> None:
+    def __init__(
+        self,
+        settings: RuntimeSettings,
+        *,
+        in_memory: bool = False,
+        screen_reader: Callable[[], ScreenReader] | None = None,
+    ) -> None:
         self.settings = settings
         self._in_memory = in_memory
         self._configured_logging = False
+        # Handed in rather than built here: reading a screen is an application
+        # component that needs a model, and this container may not import
+        # `application`. The composition root owns the one wire that crosses
+        # both, which is what it is for (ADR 0001).
+        self._screen_reader = screen_reader
 
     # --- Cross-cutting --------------------------------------------------------
 
@@ -158,6 +173,90 @@ class Container:
             timeout_seconds=self.settings.browser_timeout_seconds,
         )
 
+    # --- Computer use ---------------------------------------------------------
+
+    @cached_property
+    def stop_signal(self) -> StopSignal:
+        from infrastructure.computer.stop import FileStopSignal
+
+        return FileStopSignal(self.settings.stop_file_path)
+
+    def use_screen_reader(self, factory: Callable[[], ScreenReader]) -> None:
+        """Supply the component that can look at a screen.
+
+        Called by the composition root after construction, because the factory
+        needs the container it is being given to - it routes a model through it.
+        """
+        self._screen_reader = factory
+
+    @cached_property
+    def screen_reader(self) -> ScreenReader:
+        if self._screen_reader is None:
+            from domain.errors import DependencyNotConfiguredError
+
+            raise DependencyNotConfiguredError(
+                "Computer use needs a screen reader; the composition root did not "
+                "supply one."
+            )
+        return self._screen_reader()
+
+    def _constraints(self, *, desktop: bool) -> ComputerConstraints:
+        region = (
+            Region.parse(self.settings.computer_allowed_region)
+            if self.settings.computer_allowed_region
+            else None
+        )
+        return ComputerConstraints(
+            allowed_applications=frozenset(self.settings.computer_allowed_applications),
+            allowed_region=region,
+            max_actions=self.settings.computer_max_actions,
+            # A page has no application to be in front of, and asking the
+            # question there would refuse everything for no gain in safety.
+            applies_to_applications=desktop,
+        )
+
+    def _guarded(self, computer: Computer, *, desktop: bool) -> Computer:
+        from infrastructure.computer.guarded import GuardedComputer
+
+        return GuardedComputer(
+            computer, self._constraints(desktop=desktop), stop_signal=self.stop_signal
+        )
+
+    @cached_property
+    def browser_computer(self) -> Computer:
+        """Pixels inside the tab the employee already opened."""
+        from infrastructure.computer.playwright_computer import PlaywrightComputer
+
+        return self._guarded(PlaywrightComputer(self.browser), desktop=False)
+
+    @cached_property
+    def desktop_computer(self) -> Computer:
+        from infrastructure.computer.desktop import DesktopComputer
+
+        return self._guarded(
+            DesktopComputer(enabled=self.settings.computer_use_enabled), desktop=True
+        )
+
+    def _computers(self) -> list[tuple[Computer, Callable[[], ScreenReader]]]:
+        """Which screens exist on this machine, in hierarchy order.
+
+        The browser surface comes with the browser: if an employee may drive a
+        page, it may look at one. The desktop is separate and behind its own
+        flag, because the browser tab is the platform's and the desktop is the
+        user's.
+        """
+        # The reader is passed as a way to get one, not as one: listing the
+        # registry must not route a model, and `kai tools` does nothing else.
+        def reader() -> ScreenReader:
+            return self.screen_reader
+
+        surfaces: list[tuple[Computer, Callable[[], ScreenReader]]] = []
+        if self.settings.browser_tools_enabled:
+            surfaces.append((self.browser_computer, reader))
+        if self.settings.computer_use_enabled:
+            surfaces.append((self.desktop_computer, reader))
+        return surfaces
+
     @cached_property
     def tool_registry(self) -> ToolRegistry:
         """Everything this machine can do. Who may do what is settled per employee.
@@ -174,6 +273,12 @@ class Container:
             browser=(lambda: self.browser) if self.settings.browser_tools_enabled else None,
             code_execution=self.settings.code_execution_enabled,
             code_timeout_seconds=self.settings.code_timeout_seconds,
+            computers=(
+                self._computers
+                if self._screen_reader is not None
+                and (self.settings.browser_tools_enabled or self.settings.computer_use_enabled)
+                else None
+            ),
         )
 
     @cached_property

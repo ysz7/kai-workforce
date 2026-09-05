@@ -9,6 +9,7 @@ is for. See docs/adr/0001.
 from __future__ import annotations
 
 from app.config.settings import Settings, get_settings
+from application.computer.screen_reader import LLMScreenReader
 from application.employee_runtime.approvals import ApprovalGate
 from application.employee_runtime.executor import Executor
 from application.employee_runtime.planner import Planner
@@ -20,7 +21,18 @@ from infrastructure.container import Container
 
 
 def build_container(settings: Settings | None = None, *, in_memory: bool = False) -> Container:
-    return Container(settings or get_settings(), in_memory=in_memory)
+    """Build the container, and hand it the one dependency it cannot build.
+
+    Reading a screen needs an application component (`LLMScreenReader`) and a
+    model that only the container can route to. Neither layer may reach the
+    other, so the wire is made here and passed as a callable: nothing is built,
+    and no model is routed, for a run that never looks at a screen.
+    """
+    container = Container(settings or get_settings(), in_memory=in_memory)
+    container.use_screen_reader(
+        lambda: LLMScreenReader(container.llm_for(*LLMScreenReader.routing()))
+    )
+    return container
 
 
 async def build_runtime(container: Container, definition: EmployeeDefinition) -> EmployeeRuntime:

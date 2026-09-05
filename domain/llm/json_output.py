@@ -4,6 +4,11 @@ Models wrap JSON in prose and fences even when told not to, and a run should not
 fail because of a code fence. So parsing is forgiving about packaging and strict
 about content: if there is no object in there at all, that is a real failure and
 it is reported as one.
+
+It sits in the domain because both sides of the layer need it - the planner and
+the verifier in `application/`, the screen reader in `infrastructure/` - and
+those two may not import each other. It reads a string and returns a dict; there
+is nothing in it that belongs to either side.
 """
 
 from __future__ import annotations

@@ -59,6 +59,19 @@ class Settings(BaseSettings):
     browser_timeout_seconds: float = 30.0
     code_timeout_seconds: float = 30.0
 
+    # --- Computer use --------------------------------------------------------
+    #: Applications the desktop surface may act in. Empty means none: acting on
+    #: the machine is opt-in per application, the way the filesystem tools are
+    #: opt-in per directory. Ignored by the browser surface, which has no
+    #: applications to choose between.
+    computer_allowed_applications: tuple[str, ...] = ()
+    #: The part of the screen that may be touched, as "WIDTHxHEIGHT+X+Y".
+    #: Unset means the whole of it.
+    computer_allowed_region: str | None = None
+    #: A budget for actions on a screen, separate from the run's step limit:
+    #: one step of the loop can ask for several clicks.
+    computer_max_actions: int = 200
+
     # --- Runtime -------------------------------------------------------------
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     log_format: Literal["json", "console"] = "json"
@@ -84,6 +97,21 @@ class Settings(BaseSettings):
     @property
     def approvals_enabled(self) -> bool:
         return self.flags.approvals
+
+    @property
+    def computer_use_enabled(self) -> bool:
+        """Phase 5's Definition of Done rests on this being a switch.
+
+        Off, the computer tools are not registered at all - and every scenario
+        with an API or a browser path keeps working, because those are different
+        tools at a different level of the hierarchy.
+        """
+        return self.flags.computer_use
+
+    @property
+    def stop_file_path(self) -> Path:
+        """The brake. `kai stop` writes it; every screen action reads it."""
+        return self.data_dir / "STOP"
 
     def ensure_workspace_dir(self) -> Path:
         directory = self.resolved_workspace_dir

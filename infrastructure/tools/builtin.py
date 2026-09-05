@@ -15,9 +15,11 @@ from collections.abc import Callable
 from pathlib import Path
 
 from domain.browser.protocols import Browser
+from domain.computer.protocols import Computer, ScreenReader
 from domain.search.protocols import SearchEngine
 from domain.tools.protocols import Tool
 from infrastructure.tools.code import CodeExecutionTool
+from infrastructure.tools.computer import computer_tools
 from infrastructure.tools.filesystem import (
     FileListTool,
     FileMoveTool,
@@ -52,6 +54,10 @@ def code_tools(*, timeout_seconds: float = 30.0) -> list[Tool]:
     return [CodeExecutionTool(timeout_seconds=timeout_seconds)]
 
 
+def screen_tools(computer: Computer, reader: Callable[[], ScreenReader]) -> list[Tool]:
+    return list(computer_tools(computer, reader))
+
+
 def build_registry(
     *,
     workspace_root: Path,
@@ -59,6 +65,7 @@ def build_registry(
     browser: Callable[[], Browser] | None = None,
     code_execution: bool = True,
     code_timeout_seconds: float = 30.0,
+    computers: Callable[[], list[tuple[Computer, Callable[[], ScreenReader]]]] | None = None,
 ) -> InMemoryToolRegistry:
     """Everything this machine can do, before any employee's rights are applied."""
     tools: list[Tool] = list(filesystem_tools(workspace_root))
@@ -68,4 +75,10 @@ def build_registry(
         tools += browser_tools(browser())
     if code_execution:
         tools += code_tools(timeout_seconds=code_timeout_seconds)
+    if computers is not None:
+        # A surface at a time, so the browser one exists whether or not the
+        # desktop is switched on. The names differ per surface, which is what
+        # lets an employee be given the page and not the machine.
+        for computer, reader in computers():
+            tools += screen_tools(computer, reader)
     return InMemoryToolRegistry(tools)

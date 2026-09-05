@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from domain.capabilities.models import Capability
+from domain.computer.interfaces import InterfaceLevel
 from domain.policies.models import RiskLevel
 from domain.tools.schema import Param, ParameterSet
 
@@ -18,6 +19,11 @@ class ToolSpec:
     risk_level: RiskLevel = RiskLevel.LOW
     capabilities: frozenset[Capability] = field(default_factory=frozenset)
     reversible: bool = True
+    #: How this tool reaches the world. The default is API because a tool that
+    #: does not say otherwise is a direct call - the filesystem, a search
+    #: endpoint - and only the tools that really do drive a screen should have
+    #: to declare that they do. See `domain.computer.interfaces`.
+    interface_level: InterfaceLevel = InterfaceLevel.API
     #: The declared parameters, kept alongside the rendered schema so the same
     #: declaration both describes the tool and validates the call.
     parameters: ParameterSet = field(default_factory=ParameterSet)
@@ -31,6 +37,7 @@ class ToolSpec:
         risk_level: RiskLevel = RiskLevel.LOW,
         capabilities: frozenset[Capability] = frozenset(),
         reversible: bool = True,
+        interface_level: InterfaceLevel = InterfaceLevel.API,
     ) -> ToolSpec:
         """Declare a tool once; the JSON Schema is derived, never hand-written."""
         parameter_set = ParameterSet(parameters)
@@ -41,6 +48,7 @@ class ToolSpec:
             risk_level=risk_level,
             capabilities=capabilities,
             reversible=reversible,
+            interface_level=interface_level,
             parameters=parameter_set,
         )
 

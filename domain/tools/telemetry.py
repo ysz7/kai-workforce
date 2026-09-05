@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 from uuid import UUID
 
+from domain.computer.interfaces import InterfaceLevel
 from domain.secrets.models import redact
 
 
@@ -25,6 +26,10 @@ class ToolCallRecord:
     input_data: dict[str, Any] = field(default_factory=dict)
     output: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
+    #: Which level of the interface hierarchy this call reached the world at.
+    #: Stored rather than derived, so a trace read months later still says how
+    #: the work was done even if the tool has since been re-declared.
+    interface: InterfaceLevel = InterfaceLevel.API
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def redacted(self) -> ToolCallRecord:
@@ -37,6 +42,7 @@ class ToolCallRecord:
             input_data=redact(self.input_data),
             output=redact(self.output),
             error=self.error,
+            interface=self.interface,
             created_at=self.created_at,
         )
 

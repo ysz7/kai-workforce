@@ -59,6 +59,11 @@ def config() -> None:
     typer.echo(f"database:      {settings.resolved_database_url}")
     typer.echo(f"workspace:     {settings.resolved_workspace_dir}")
     typer.echo(f"approvals:     {settings.approval_mode}")
+    typer.echo(
+        f"computer use:  {'on' if settings.computer_use_enabled else 'off'} "
+        f"(desktop; the browser surface follows the browser tools)"
+    )
+    typer.echo(f"stop file:     {settings.stop_file_path}")
     typer.echo(f"llm_base_url:  {settings.llm_base_url}")
     typer.echo(f"llm_api_key:   {'set' if settings.llm_api_key else 'not set'}")
     typer.echo(f"default_model: {settings.llm_default_model}")
@@ -268,8 +273,37 @@ def tools() -> None:
         users = sorted(d.name for d in declared if spec.name in d.allowed_tools)
         gate = "" if spec.reversible else "  [needs approval]"
         typer.secho(f"{spec.name:<16}", fg="cyan", nl=False)
-        typer.echo(f"{spec.risk_level.value:<8}{', '.join(users) or 'nobody'}{gate}")
+        typer.echo(
+            f"{spec.risk_level.value:<8}{spec.interface_level.value:<14}"
+            f"{', '.join(users) or 'nobody'}{gate}"
+        )
         typer.echo(f"                 {spec.description.splitlines()[0]}")
+
+
+@app.command()
+def stop(
+    reason: str = typer.Option("", "--reason", "-r", help="Why, shown to the employee."),
+    clear: bool = typer.Option(False, "--clear", help="Release the brake instead."),
+) -> None:
+    """Stop anything that is acting on a screen, right now.
+
+    Deliberately not a signal to a process: it writes a file that every action
+    on a screen reads before it happens. So it works from a second terminal
+    while the first one is busy, it works when the run has the screen, and a
+    stop set while nothing is running still holds when the next run starts.
+    """
+    from infrastructure.computer.stop import FileStopSignal
+
+    signal = FileStopSignal(get_settings().stop_file_path)
+    if clear:
+        released = signal.release()
+        typer.echo(
+            "Computer use released." if released else "Computer use was not stopped."
+        )
+        return
+    path = signal.engage(reason)
+    typer.secho(f"Computer use stopped: {signal.reason}", fg="yellow")
+    typer.echo(f"Release it with: kai stop --clear   ({path})")
 
 
 @app.command()

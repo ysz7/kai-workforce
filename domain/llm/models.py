@@ -31,11 +31,28 @@ class ToolCallRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class ImageContent:
+    """A picture put in front of the model, inline.
+
+    Inline rather than a URL: the images this platform sends are screenshots of
+    the user's own machine, and uploading one somewhere to be fetched back would
+    put it on a network it never needed to touch.
+    """
+
+    data_url: str
+    #: What the picture is of, for a provider or a log that shows text only.
+    alt_text: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class Message:
     role: Role
     content: str
     name: str | None = None
     tool_call_id: str | None = None
+    #: Attached to a user message. An adapter for a provider that cannot take
+    #: images is expected to fail loudly rather than send the text alone.
+    images: tuple[ImageContent, ...] = ()
     #: Set on an assistant message that asked for tools, so a follow-up request
     #: can replay the exchange the provider expects.
     tool_calls: tuple[ToolCallRequest, ...] = ()
@@ -45,8 +62,8 @@ class Message:
         return cls(Role.SYSTEM, content)
 
     @classmethod
-    def user(cls, content: str) -> Message:
-        return cls(Role.USER, content)
+    def user(cls, content: str, images: tuple[ImageContent, ...] = ()) -> Message:
+        return cls(Role.USER, content, images=images)
 
     @classmethod
     def assistant(cls, content: str, tool_calls: tuple[ToolCallRequest, ...] = ()) -> Message:

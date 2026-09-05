@@ -30,6 +30,9 @@ class RuntimeSettings(Protocol):
     browser_headless: bool
     browser_timeout_seconds: float
     code_timeout_seconds: float
+    computer_allowed_applications: tuple[str, ...]
+    computer_allowed_region: str | None
+    computer_max_actions: int
 
     @property
     def resolved_database_url(self) -> str: ...
@@ -45,6 +48,12 @@ class RuntimeSettings(Protocol):
 
     @property
     def approvals_enabled(self) -> bool: ...
+
+    @property
+    def computer_use_enabled(self) -> bool: ...
+
+    @property
+    def stop_file_path(self) -> Path: ...
 
     def ensure_data_dir(self) -> Path: ...
 

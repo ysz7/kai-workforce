@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from application.employee_runtime.json_output import extract_object
+from domain.llm.json_output import extract_object
 
 
 def test_plain_json_is_read() -> None:

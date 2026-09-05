@@ -8,12 +8,17 @@ not, and the employee should be able to choose.
 Opening and extracting are also separate, because a page load and reading what
 loaded are separately observable: an employee that opened a page which returned
 nothing should see that as its own step rather than as an empty answer.
+
+The two of them declare themselves BROWSER on the interface hierarchy and search
+declares itself API - because that is what it is. A search endpoint returns
+structured results over HTTP; nothing about it involves rendering a page.
 """
 
 from __future__ import annotations
 
 from domain.browser.protocols import Browser
 from domain.capabilities.models import Capability
+from domain.computer.interfaces import InterfaceLevel
 from domain.search.models import SearchQuery
 from domain.search.protocols import SearchEngine
 from domain.tools.models import ToolResult, ToolSpec
@@ -35,6 +40,7 @@ class WebSearchTool(BaseTool):
                 Param("limit", type="integer", required=False, default=DEFAULT_RESULT_LIMIT,
                       description=f"How many results to return, at most {MAX_RESULT_LIMIT}."),
                 capabilities=frozenset({Capability.WEB_BROWSING}),
+                interface_level=InterfaceLevel.API,
             )
         )
         self._engine = engine
@@ -65,6 +71,7 @@ class BrowserOpenTool(BaseTool):
                 "what the page says.",
                 Param("url", description="The full URL, including https://."),
                 capabilities=frozenset({Capability.WEB_BROWSING}),
+                interface_level=InterfaceLevel.BROWSER,
             )
         )
         self._browser = browser
@@ -82,6 +89,7 @@ class BrowserExtractTool(BaseTool):
                 "Read the text of the page that is currently open, with its title "
                 "and final URL.",
                 capabilities=frozenset({Capability.WEB_BROWSING}),
+                interface_level=InterfaceLevel.BROWSER,
             )
         )
         self._browser = browser

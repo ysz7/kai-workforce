@@ -161,7 +161,17 @@ class ChatCompletionsProvider:
 
 
 def _message_to_wire(message: Message) -> dict[str, Any]:
-    wire: dict[str, Any] = {"role": message.role.value, "content": message.content}
+    # A message with pictures is sent as a list of content parts; one without
+    # stays a plain string. Sending the list shape unconditionally would be
+    # tidier here and is rejected by enough servers - local runners especially -
+    # to be worth the branch.
+    content: Any = message.content
+    if message.images:
+        content = [{"type": "text", "text": message.content}] + [
+            {"type": "image_url", "image_url": {"url": image.data_url}}
+            for image in message.images
+        ]
+    wire: dict[str, Any] = {"role": message.role.value, "content": content}
     if message.name:
         wire["name"] = message.name
     if message.tool_call_id:

@@ -25,6 +25,19 @@ input_cost_per_1k_usd = 0.0
 output_cost_per_1k_usd = 0.0
 quality = 0.4
 
+# Reading a screen is the one thing in the platform that needs eyes. The router
+# is asked for VISION and answers from here; without an entry that offers it,
+# every computer-use run fails at routing with a message about this file, which
+# is the right place for that to be fixed.
+[models.local-vision]
+provider = "local"
+model = "qwen2.5vl:7b"
+capabilities = ["TEXT_REASONING", "VISION", "STRUCTURED_OUTPUT"]
+context_tokens = 32768
+input_cost_per_1k_usd = 0.0
+output_cost_per_1k_usd = 0.0
+quality = 0.6
+
 [defaults]
 planning = "local-balanced"
 execution = "local-balanced"
