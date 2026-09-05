@@ -12,11 +12,12 @@ and give KAI a task.
 
 ## Status
 
-**Phase 2 - LLM Abstraction.** On top of Phase 1's domain, task state machine and
-local SQLite store, the platform can now reach a model: a provider-neutral `LLM`
-contract, one working adapter, capability-aware routing from a catalog, retry on
-transient failures only, and cost accounting on every call. The employee runtime
-lands in Phase 3. See `dev-assets/implementation-plan.md` for the full roadmap.
+**Phase 3 - Employee Runtime.** One digital employee now works end to end: it
+plans, executes inside a budget, and its result is verified before the task is
+allowed to complete. A task killed mid-run continues from where it stopped. The
+tools it works *with* - files, browser, search - arrive in Phase 4.
+
+See `dev-assets/implementation-plan.md` for the full roadmap.
 
 ## Getting started
 
@@ -35,6 +36,25 @@ uv run kai ask "Which city is the capital of Germany?"
 uv run kai spend               # what the calls have cost so far
 ```
 
+## Giving an employee a task
+
+```bash
+uv run kai employees           # who is declared
+uv run kai run-task --employee researcher "Explain what SQLite WAL mode changes about concurrency, with sources."
+uv run kai resume              # pick up anything that was interrupted
+```
+
+Every task goes through three stages. **Plan** turns the goal into steps.
+**Execute** runs a tool-calling loop bounded by three budgets at once - steps,
+cost and wall time - and each action is followed by an explicit observation
+rather than feeding raw output into the next decision. **Verify** judges the
+result against the goal, and a task cannot complete without passing; a rejected
+result goes back through planning once, told what was missing.
+
+State is written to the task after every step, so `kill -9` mid-run loses
+nothing: `kai resume` continues from the last saved step instead of starting
+over.
+
 ### Without a key, and without spending anything
 
 A model running on this machine works just as well, and is what Phase 2 was
@@ -48,6 +68,28 @@ uv run kai ask "Which city is the capital of Germany?"
 
 That is the same code path - router, adapter, metering, spend log - pointed at a
 different catalog. Local calls are priced at zero because they are.
+
+## Adding an employee
+
+Create `employees/<name>/employee.yaml`. That is the whole change - no class, no
+registration, no edit to the runtime:
+
+```yaml
+name: analyst
+role: Data Analyst
+goals:
+  - text: Say what the data supports, and no more.
+allowed_tools: [fs.read]        # least privilege: it gets what it lists
+model_profile:
+  capabilities: [TEXT_REASONING, CODE]
+limits:
+  max_steps: 6
+  max_cost_usd: 0.25
+```
+
+An optional `prompts/system.md` next to it gives the employee its own voice.
+All employees share one runtime; a second runtime would mean the difference
+between two employees had stopped being declarative.
 
 ## Changing models
 
@@ -68,6 +110,7 @@ whatever is left. See [ADR 0003](docs/adr/0003-the-configured-default-model-wins
 | `domain/` | Business logic | Protocols and values. Depends on nothing. |
 | `infrastructure/` | Adapters | Providers, persistence, tools. Depends on `domain/` only. |
 | `employees/` | Declarations | An employee is a definition file, not code. |
+| `prompts/` | Content | Planner and verifier templates, versioned as files. |
 
 The import rules are enforced by `import-linter` and by
 `tests/unit/test_architecture_boundaries.py`. An `httpx` import inside `domain/`

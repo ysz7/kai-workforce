@@ -15,10 +15,14 @@ from functools import cached_property
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from domain.capabilities.models import CapabilityRequirement
+from domain.employees.protocols import EmployeeRegistry
 from domain.llm.models import RoutingHints, TaskKind
 from domain.llm.protocols import LLM, ModelRouter
 from domain.llm.telemetry import LLMCallLog
 from domain.tasks.repository import TaskRepository
+from domain.tools.protocols import ToolRegistry
+from domain.workforce.repository import AssignmentRepository
+from infrastructure.employees.yaml_registry import YamlEmployeeRegistry
 from infrastructure.llm.catalog import ModelCatalog
 from infrastructure.llm.factory import ProviderFactory
 from infrastructure.llm.retry import RetryPolicy
@@ -27,6 +31,7 @@ from infrastructure.observability.logging import configure_logging, get_logger
 from infrastructure.persistence.in_memory_task_repository import InMemoryTaskRepository
 from infrastructure.persistence.session import create_engine, create_session_factory
 from infrastructure.settings import RuntimeSettings
+from infrastructure.tools.registry import InMemoryToolRegistry
 
 
 class Container:
@@ -112,10 +117,59 @@ class Container:
         choice = self.model_router.select(
             task_kind, requirement or CapabilityRequirement(), hints
         )
-        self.logger.info(
+        # Debug, not info: clients are built when the runtime is assembled, so at
+        # info level this reads as though the work happened, and muddies a trace.
+        self.logger.debug(
             "llm.routed", task_kind=str(task_kind), model=choice.model, reason=choice.reason
         )
         return self.llm_factory.for_choice(choice)
+
+    # --- Workforce ------------------------------------------------------------
+
+    @cached_property
+    def employee_registry(self) -> EmployeeRegistry:
+        return YamlEmployeeRegistry(self.settings.employees_dir)
+
+    @cached_property
+    def tool_registry(self) -> ToolRegistry:
+        # Empty until Phase 4 fills it. The registry itself exists now because
+        # the executor is written against it, not against a list of tools.
+        return InMemoryToolRegistry()
+
+    @cached_property
+    def employee_repository(self):
+        if self._in_memory:
+            from infrastructure.persistence.employee_repository import (
+                InMemoryEmployeeRepository,
+            )
+
+            return InMemoryEmployeeRepository()
+        from infrastructure.persistence.employee_repository import SqliteEmployeeRepository
+
+        return SqliteEmployeeRepository(self.session_factory)
+
+    async def sync_employees(self) -> int:
+        """Persist the declared employees so tasks can reference them.
+
+        Called before running anything: the declarations are the source of
+        truth, and the table has to know about an employee before a task can be
+        assigned to it.
+        """
+        return await self.employee_repository.sync(self.employee_registry.list())
+
+    @cached_property
+    def assignment_repository(self) -> AssignmentRepository:
+        if self._in_memory:
+            from infrastructure.persistence.assignment_repository import (
+                InMemoryAssignmentRepository,
+            )
+
+            return InMemoryAssignmentRepository()
+        from infrastructure.persistence.assignment_repository import (
+            SqliteAssignmentRepository,
+        )
+
+        return SqliteAssignmentRepository(self.session_factory)
 
     async def aclose(self) -> None:
         if "llm_factory" in self.__dict__:

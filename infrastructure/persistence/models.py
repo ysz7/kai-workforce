@@ -138,3 +138,36 @@ class LLMCallRow(Base):
     success: Mapped[bool] = mapped_column(nullable=False, default=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(nullable=False, default=_utcnow)
+
+
+class TaskAssignmentRow(Base):
+    """Who was asked to do what, and on whose authority.
+
+    Kept separate from `tasks` because a task can be assigned more than once -
+    reassigned after a failure, retried, or handed to a different employee - and
+    the history of that is what makes a run legible afterwards.
+    """
+
+    __tablename__ = "task_assignments"
+    __table_args__ = (
+        Index("ix_task_assignments_task", "task_id", "assigned_at"),
+        Index("ix_task_assignments_employee", "employee_id", "assigned_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default")
+    task_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False
+    )
+    employee_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("employees.id"), nullable=False
+    )
+    assigned_by: Mapped[str] = mapped_column(String(32), nullable=False)
+    assigned_by_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: What the delegator deliberately passed down - not the whole conversation.
+    context: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    assigned_at: Mapped[datetime] = mapped_column(nullable=False, default=_utcnow)
+    accepted_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    outcome: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)

@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     llm_default_model: str = "anthropic/claude-sonnet-5"
     #: Override the bundled model catalog. Changing models is a config change.
     model_catalog_path: Path | None = None
+    #: Where employee declarations are discovered. Adding an employee is adding
+    #: a directory here, and nothing else.
+    employees_dir: Path | None = None
     llm_timeout_seconds: float = 120.0
     llm_retry_attempts: int = 3
     #: Where a locally served model listens. Used only by the 'local' provider.

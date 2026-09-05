@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
+from domain.tasks.plan import TaskPlan
 from domain.tasks.task import (
     Execution,
     Task,
@@ -46,7 +47,7 @@ def task_to_row(task: Task) -> dict[str, Any]:
         "assigned_employee_id": (
             str(task.assigned_employee_id) if task.assigned_employee_id else None
         ),
-        "plan": task.plan,
+        "plan": task.plan.to_dict() if task.plan else None,
         "state": {"step": task.execution.step, "data": task.execution.state},
         "result": (
             {
@@ -84,7 +85,7 @@ def row_to_task(row: TaskRow) -> Task:
         plan_id=_as_uuid(row.plan_id),
         workflow_run_id=_as_uuid(row.workflow_run_id),
         assigned_employee_id=_as_uuid(row.assigned_employee_id),
-        plan=row.plan,
+        plan=TaskPlan.from_dict(row.plan),
         execution=Execution(step=state.get("step", 0), state=state.get("data", {})),
         result=(
             TaskResult(

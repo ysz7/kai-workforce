@@ -73,6 +73,33 @@ class ApprovalRequiredError(DomainError):
     """An irreversible action was attempted without a human decision."""
 
 
+# --- Execution ----------------------------------------------------------------
+
+
+class ExecutionError(KaiError):
+    """A task could not be carried out."""
+
+
+class LimitExceededError(ExecutionError):
+    """A run hit one of its budgets: steps, cost or wall time."""
+
+    def __init__(self, kind: str, detail: str = "") -> None:
+        super().__init__(f"Execution limit reached ({kind}){f': {detail}' if detail else ''}")
+        self.kind = kind
+
+
+class PlanningError(ExecutionError):
+    """The model did not produce a usable plan."""
+
+
+class VerificationFailedError(ExecutionError):
+    """The result did not hold up, and no attempts are left."""
+
+    def __init__(self, reason: str, missing: tuple[str, ...] = ()) -> None:
+        super().__init__(reason)
+        self.missing = missing
+
+
 # --- Storage ------------------------------------------------------------------
 
 

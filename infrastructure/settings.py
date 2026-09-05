@@ -20,6 +20,7 @@ class RuntimeSettings(Protocol):
     llm_api_key: str | None
     llm_base_url: str
     model_catalog_path: Path | None
+    employees_dir: Path | None
     llm_timeout_seconds: float
     llm_retry_attempts: int
     local_llm_base_url: str

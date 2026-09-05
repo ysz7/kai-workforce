@@ -8,7 +8,7 @@ from importlib.metadata import version as package_version
 
 import typer
 
-from app.config.container import build_container
+from app.config.container import build_container, build_task_runner
 from app.config.settings import get_settings
 from domain.errors import KaiError, StorageNotInitializedError
 from domain.llm.models import LLMRequest, Message, RoutingHints, TaskKind
@@ -177,11 +177,93 @@ def models() -> None:
         typer.echo("No defaults configured.")
 
 
+@app.command(name="run-task")
+def run_task(
+    goal: str = typer.Argument(..., help="What you want done."),
+    employee: str = typer.Option("researcher", "--employee", "-e", help="Who should do it."),
+) -> None:
+    """Give a task to a digital employee and wait for the result."""
+
+    async def _run() -> None:
+        container = build_container()
+        try:
+            await container.sync_employees()
+            runner = build_task_runner(container)
+            task = await runner.submit_and_run(goal, employee)
+            _report(task)
+        except KaiError as error:
+            typer.secho(f"{type(error).__name__}: {error}", fg="red", err=True)
+            raise typer.Exit(code=1) from error
+        finally:
+            await container.aclose()
+
+    asyncio.run(_run())
+
+
+@app.command()
+def resume() -> None:
+    """Pick up every task that was interrupted, from where it stopped."""
+
+    async def _run() -> None:
+        container = build_container()
+        try:
+            await container.sync_employees()
+            runner = build_task_runner(container)
+            pending = await runner.resumable()
+            if not pending:
+                typer.echo("Nothing to resume.")
+                return
+            typer.echo(f"Resuming {len(pending)} task(s).")
+            for task in pending:
+                typer.secho(f"\n-> {task.goal}", fg="cyan")
+                _report(await runner.resume(task))
+        except KaiError as error:
+            typer.secho(f"{type(error).__name__}: {error}", fg="red", err=True)
+            raise typer.Exit(code=1) from error
+        finally:
+            await container.aclose()
+
+    asyncio.run(_run())
+
+
 @app.command()
 def employees() -> None:
-    """List the declared employees."""
-    # The registry lands in Phase 3, together with the runtime that uses it.
-    typer.echo("No employees yet: the registry arrives in Phase 3.")
+    """List the declared employees.
+
+    Each one is a directory under `employees/`. Nothing here reads a class name.
+    """
+    container = build_container()
+    declared = container.employee_registry.list()
+    if not declared:
+        typer.echo("No employees declared.")
+        return
+    for definition in declared:
+        typer.secho(f"{definition.name}", fg="cyan", nl=False)
+        typer.echo(f"  {definition.role.title}")
+        typer.echo(f"  tools:  {', '.join(sorted(definition.allowed_tools)) or 'none'}")
+        typer.echo(
+            f"  limits: {definition.limits.max_steps} steps, "
+            f"${definition.limits.max_cost_usd}, "
+            f"{definition.limits.max_wall_time_seconds:.0f}s"
+        )
+
+
+def _report(task) -> None:
+    from domain.tasks.task import TaskStatus
+
+    colour = {
+        TaskStatus.COMPLETED: "green",
+        TaskStatus.FAILED: "red",
+        TaskStatus.CANCELLED: "yellow",
+    }.get(task.status, "white")
+
+    if task.result and task.result.summary:
+        typer.echo(f"\n{task.result.summary}")
+
+    typer.secho(f"\n[{task.status}] {task.id}", fg=colour)
+    if task.error:
+        typer.secho(f"{task.error.kind}: {task.error.message}", fg="red")
+    typer.echo(f"steps: {task.execution.step}  cost: ${task.cost_usd:.6f}")
 
 
 if __name__ == "__main__":

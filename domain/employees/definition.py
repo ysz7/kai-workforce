@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from uuid import UUID, uuid4
 
+from domain.employees.limits import ExecutionLimits
 from domain.llm.models import ModelProfile
 from domain.memory.models import MemoryScope
 from domain.policies.models import ActorKind
@@ -52,6 +53,11 @@ class EmployeeDefinition:
     policies: frozenset[str] = field(default_factory=frozenset)
     model_profile: ModelProfile = field(default_factory=ModelProfile)
     memory_scope: MemoryScope = MemoryScope.EMPLOYEE_PRIVATE
+    #: What one run of this employee is allowed to spend. Part of the
+    #: declaration, because how much a job is worth is a property of the job.
+    limits: ExecutionLimits = field(default_factory=ExecutionLimits)
+    #: The employee's own voice, shipped alongside its YAML.
+    system_prompt: str = ""
     workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID
     enabled: bool = True
 
@@ -81,6 +87,12 @@ class EmployeeDefinition:
                 "allowed_tools": sorted(self.allowed_tools),
                 "policies": sorted(self.policies),
                 "memory_scope": str(self.memory_scope),
+                "system_prompt": self.system_prompt,
+                "limits": [
+                    self.limits.max_steps,
+                    self.limits.max_cost_usd,
+                    self.limits.max_wall_time_seconds,
+                ],
                 "model_profile": {
                     "capabilities": sorted(str(c) for c in self.model_profile.capabilities),
                     "min_context_tokens": self.model_profile.min_context_tokens,

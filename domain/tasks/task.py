@@ -9,6 +9,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from domain.errors import InvalidStateTransitionError
+from domain.tasks.plan import TaskPlan
 from domain.workspace.models import DEFAULT_WORKSPACE_ID, WorkspaceId
 
 
@@ -41,7 +42,12 @@ RESUMABLE_STATUSES: frozenset[TaskStatus] = frozenset(
 )
 
 ALLOWED_TRANSITIONS: dict[TaskStatus, frozenset[TaskStatus]] = {
-    TaskStatus.CREATED: frozenset({TaskStatus.PLANNING, TaskStatus.RUNNING, TaskStatus.CANCELLED}),
+    # FAILED is reachable from CREATED because a task can fail before it starts -
+    # its employee no longer exists, the provider is unconfigured - and burying
+    # that behind an illegal-transition error would hide the real cause.
+    TaskStatus.CREATED: frozenset(
+        {TaskStatus.PLANNING, TaskStatus.RUNNING, TaskStatus.FAILED, TaskStatus.CANCELLED}
+    ),
     TaskStatus.PLANNING: frozenset({TaskStatus.RUNNING, TaskStatus.FAILED, TaskStatus.CANCELLED}),
     TaskStatus.RUNNING: frozenset(
         {
@@ -60,8 +66,17 @@ ALLOWED_TRANSITIONS: dict[TaskStatus, frozenset[TaskStatus]] = {
     TaskStatus.WAITING_FOR_APPROVAL: frozenset(
         {TaskStatus.RUNNING, TaskStatus.FAILED, TaskStatus.CANCELLED}
     ),
+    # A rejected result goes back to planning, not straight back to work: the
+    # second attempt has to be better informed than the first, and that is a
+    # decision about the plan.
     TaskStatus.VERIFYING: frozenset(
-        {TaskStatus.COMPLETED, TaskStatus.RUNNING, TaskStatus.FAILED, TaskStatus.CANCELLED}
+        {
+            TaskStatus.COMPLETED,
+            TaskStatus.PLANNING,
+            TaskStatus.RUNNING,
+            TaskStatus.FAILED,
+            TaskStatus.CANCELLED,
+        }
     ),
     TaskStatus.COMPLETED: frozenset(),
     TaskStatus.FAILED: frozenset(),
@@ -136,7 +151,7 @@ class Task:
     plan_id: UUID | None = None
     workflow_run_id: UUID | None = None
     assigned_employee_id: UUID | None = None
-    plan: dict[str, Any] | None = None
+    plan: TaskPlan | None = None
     execution: Execution = field(default_factory=Execution)
     result: TaskResult | None = None
     error: TaskError | None = None
