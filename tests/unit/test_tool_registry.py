@@ -55,3 +55,24 @@ def test_re_registering_a_name_replaces_the_tool(registry) -> None:
     registry.register(replacement)
 
     assert registry.get("fs.read", user("*")).spec.description == "A better reader"
+
+
+def test_every_employee_declares_tools_that_exist(tmp_path) -> None:
+    """A typo in a declaration is silent otherwise: the employee simply never acts."""
+    from infrastructure.employees.yaml_registry import YamlEmployeeRegistry
+    from infrastructure.tools.builtin import build_registry
+    from tests.fakes.browser import FakeBrowser, FakeSearchEngine
+
+    registry = build_registry(
+        workspace_root=tmp_path / "workspace",
+        search_engine=FakeSearchEngine,
+        browser=FakeBrowser,
+    )
+    available = {spec.name for spec in registry.list_specs(user("*"))}
+    unknown = {
+        declaration.name: sorted(declaration.allowed_tools - available)
+        for declaration in YamlEmployeeRegistry().list()
+    }
+    unknown = {name: tools for name, tools in unknown.items() if tools}
+
+    assert not unknown, f"declared tools that do not exist: {unknown}"

@@ -47,8 +47,11 @@ def test_the_shipped_researcher_loads_from_its_declaration_alone() -> None:
     assert researcher.role.title == "Research Specialist"
     assert researcher.goals
     assert researcher.memory_scope is MemoryScope.EMPLOYEE_PRIVATE
-    assert researcher.limits.max_steps == 8
+    assert researcher.limits.max_steps == 12
     assert researcher.system_prompt.startswith("You are a Research Specialist")
+    # Phase 4: it searches and reads pages, and has no tool it does not need.
+    assert "web.search" in researcher.allowed_tools
+    assert "code.run" not in researcher.allowed_tools
 
 
 def test_adding_a_second_employee_is_one_yaml_file(tmp_path: Path) -> None:

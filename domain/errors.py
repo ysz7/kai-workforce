@@ -58,6 +58,18 @@ class ToolNotFoundError(NotFoundError):
         super().__init__(f"Unknown tool: {name}")
 
 
+class ToolInputError(DomainError):
+    """A tool was called with arguments it cannot work with.
+
+    Reported back to the model rather than raised at the user: being told the
+    argument was wrong is something a model can act on in the next step.
+    """
+
+
+class SecretNotFoundError(ConfigurationError):
+    """A tool asked for a credential that is not configured on this machine."""
+
+
 # --- Permissions --------------------------------------------------------------
 
 
@@ -71,6 +83,10 @@ class PermissionDeniedError(DomainError):
 
 class ApprovalRequiredError(DomainError):
     """An irreversible action was attempted without a human decision."""
+
+
+class ApprovalDeniedError(DomainError):
+    """A human was asked about an irreversible action and said no."""
 
 
 # --- Execution ----------------------------------------------------------------

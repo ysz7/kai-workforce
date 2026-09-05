@@ -25,7 +25,27 @@ class RuntimeSettings(Protocol):
     llm_retry_attempts: int
     local_llm_base_url: str
 
+    # --- Tools ----------------------------------------------------------------
+    approval_mode: str
+    browser_headless: bool
+    browser_timeout_seconds: float
+    code_timeout_seconds: float
+
     @property
     def resolved_database_url(self) -> str: ...
 
+    @property
+    def resolved_workspace_dir(self) -> Path: ...
+
+    @property
+    def browser_tools_enabled(self) -> bool: ...
+
+    @property
+    def code_execution_enabled(self) -> bool: ...
+
+    @property
+    def approvals_enabled(self) -> bool: ...
+
     def ensure_data_dir(self) -> Path: ...
+
+    def ensure_workspace_dir(self) -> Path: ...

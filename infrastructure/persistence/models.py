@@ -22,9 +22,11 @@ from sqlalchemy import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import JSON
 
+from domain.approvals.models import ApprovalState
 from domain.tasks.task import TaskStatus
 
 TASK_STATUS_VALUES = tuple(status.value for status in TaskStatus)
+APPROVAL_STATE_VALUES = tuple(state.value for state in ApprovalState)
 
 
 class Base(DeclarativeBase):
@@ -171,3 +173,60 @@ class TaskAssignmentRow(Base):
     completed_at: Mapped[datetime | None] = mapped_column(nullable=True)
     outcome: Mapped[str | None] = mapped_column(String(32), nullable=True)
     result: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
+
+class ToolCallRow(Base):
+    """Every tool call, with its arguments redacted.
+
+    Model calls have been accounted for since Phase 2; tools need the same
+    treatment for the same reason. A failing loop does not announce itself - it
+    just keeps calling, and this is where that becomes visible after the fact.
+    """
+
+    __tablename__ = "tool_calls"
+    __table_args__ = (Index("ix_tool_calls_task_id", "task_id", "id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    task_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    tool: Mapped[str] = mapped_column(String(64), nullable=False)
+    input: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    output: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    success: Mapped[bool] = mapped_column(nullable=False, default=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(nullable=False, default=_utcnow)
+
+
+class ApprovalRow(Base):
+    """A question put to a human, and the answer.
+
+    Written before the answer arrives, so a process killed mid-question leaves a
+    PENDING row rather than an action nobody can account for.
+    """
+
+    __tablename__ = "approvals"
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('" + "','".join(APPROVAL_STATE_VALUES) + "')",
+            name="ck_approvals_state",
+        ),
+        Index("ix_approvals_state", "state", "requested_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default")
+    task_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False
+    )
+    requested_by_employee_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("employees.id"), nullable=True
+    )
+    action: Mapped[str] = mapped_column(Text, nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    risk_level: Mapped[str] = mapped_column(String(16), nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    requested_at: Mapped[datetime] = mapped_column(nullable=False, default=_utcnow)
+    resolved_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    resolved_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)

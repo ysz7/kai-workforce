@@ -9,6 +9,7 @@ is for. See docs/adr/0001.
 from __future__ import annotations
 
 from app.config.settings import Settings, get_settings
+from application.employee_runtime.approvals import ApprovalGate
 from application.employee_runtime.executor import Executor
 from application.employee_runtime.planner import Planner
 from application.employee_runtime.runtime import EmployeeRuntime, RuntimeDependencies
@@ -36,6 +37,8 @@ async def build_runtime(container: Container, definition: EmployeeDefinition) ->
                 container.llm_for(*Executor.routing(definition)),
                 container.tool_registry,
                 limits=definition.limits,
+                approvals=ApprovalGate(container.approval_service),
+                call_log=container.tool_call_log,
             ),
             verifier=Verifier(container.llm_for(*Verifier.routing())),
             tasks=container.task_repository,

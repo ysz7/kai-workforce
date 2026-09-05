@@ -14,13 +14,18 @@ from functools import cached_property
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from domain.approvals.protocols import ApprovalRepository, ApprovalService
+from domain.browser.protocols import Browser
 from domain.capabilities.models import CapabilityRequirement
 from domain.employees.protocols import EmployeeRegistry
 from domain.llm.models import RoutingHints, TaskKind
 from domain.llm.protocols import LLM, ModelRouter
 from domain.llm.telemetry import LLMCallLog
+from domain.search.protocols import SearchEngine
+from domain.secrets.protocols import SecretResolver
 from domain.tasks.repository import TaskRepository
 from domain.tools.protocols import ToolRegistry
+from domain.tools.telemetry import ToolCallLog
 from domain.workforce.repository import AssignmentRepository
 from infrastructure.employees.yaml_registry import YamlEmployeeRegistry
 from infrastructure.llm.catalog import ModelCatalog
@@ -30,8 +35,9 @@ from infrastructure.llm.router import CapabilityAwareModelRouter
 from infrastructure.observability.logging import configure_logging, get_logger
 from infrastructure.persistence.in_memory_task_repository import InMemoryTaskRepository
 from infrastructure.persistence.session import create_engine, create_session_factory
+from infrastructure.secrets.env import EnvSecretResolver
 from infrastructure.settings import RuntimeSettings
-from infrastructure.tools.registry import InMemoryToolRegistry
+from infrastructure.tools.builtin import build_registry
 
 
 class Container:
@@ -130,11 +136,80 @@ class Container:
     def employee_registry(self) -> EmployeeRegistry:
         return YamlEmployeeRegistry(self.settings.employees_dir)
 
+    # --- Tools ----------------------------------------------------------------
+
+    @cached_property
+    def secret_resolver(self) -> SecretResolver:
+        return EnvSecretResolver()
+
+    @cached_property
+    def search_engine(self) -> SearchEngine:
+        from infrastructure.search.duckduckgo import DuckDuckGoSearch
+
+        return DuckDuckGoSearch(timeout_seconds=self.settings.browser_timeout_seconds)
+
+    @cached_property
+    def browser(self) -> Browser:
+        from infrastructure.browser.playwright_browser import PlaywrightBrowser
+
+        return PlaywrightBrowser(
+            self.search_engine,
+            headless=self.settings.browser_headless,
+            timeout_seconds=self.settings.browser_timeout_seconds,
+        )
+
     @cached_property
     def tool_registry(self) -> ToolRegistry:
-        # Empty until Phase 4 fills it. The registry itself exists now because
-        # the executor is written against it, not against a list of tools.
-        return InMemoryToolRegistry()
+        """Everything this machine can do. Who may do what is settled per employee.
+
+        The callables are passed rather than the objects: a workforce that never
+        opens a page never launches a browser, and never imports Playwright.
+        """
+        self.configure()
+        return build_registry(
+            workspace_root=self.settings.ensure_workspace_dir(),
+            search_engine=(
+                (lambda: self.search_engine) if self.settings.browser_tools_enabled else None
+            ),
+            browser=(lambda: self.browser) if self.settings.browser_tools_enabled else None,
+            code_execution=self.settings.code_execution_enabled,
+            code_timeout_seconds=self.settings.code_timeout_seconds,
+        )
+
+    @cached_property
+    def tool_call_log(self) -> ToolCallLog:
+        if self._in_memory:
+            from infrastructure.persistence.tool_call_repository import InMemoryToolCallLog
+
+            return InMemoryToolCallLog()
+        from infrastructure.persistence.tool_call_repository import SqliteToolCallLog
+
+        return SqliteToolCallLog(self.session_factory)
+
+    # --- Approvals --------------------------------------------------------------
+
+    @cached_property
+    def approval_repository(self) -> ApprovalRepository:
+        if self._in_memory:
+            from infrastructure.persistence.approval_repository import (
+                InMemoryApprovalRepository,
+            )
+
+            return InMemoryApprovalRepository()
+        from infrastructure.persistence.approval_repository import SqliteApprovalRepository
+
+        return SqliteApprovalRepository(self.session_factory)
+
+    @cached_property
+    def approval_service(self) -> ApprovalService | None:
+        """None means nobody can be asked - and so nothing irreversible happens."""
+        if not self.settings.approvals_enabled:
+            return None
+        from infrastructure.approvals.service import LocalApprovalService
+
+        return LocalApprovalService(
+            self.approval_repository, mode=self.settings.approval_mode
+        )
 
     @cached_property
     def employee_repository(self):
@@ -174,5 +249,11 @@ class Container:
     async def aclose(self) -> None:
         if "llm_factory" in self.__dict__:
             await self.llm_factory.aclose()
+        # Only what was actually built: a run that never searched has no client
+        # to close, and asking for one here would create it in order to do so.
+        for name in ("browser", "search_engine"):
+            resource = self.__dict__.get(name)
+            if resource is not None:
+                await resource.aclose()
         if "engine" in self.__dict__:
             await self.engine.dispose()

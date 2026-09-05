@@ -47,6 +47,18 @@ class Settings(BaseSettings):
     #: Where a locally served model listens. Used only by the 'local' provider.
     local_llm_base_url: str = "http://127.0.0.1:11434/v1"
 
+    # --- Tools ---------------------------------------------------------------
+    #: The one directory the filesystem tools can see. Point it at the folder
+    #: the work is actually in; nothing outside it is reachable.
+    workspace_dir: Path | None = None
+    #: prompt | deny | allow. What happens when an irreversible action comes up:
+    #: ask the person at the terminal, refuse, or - only if explicitly set -
+    #: proceed. A run with nobody watching refuses whatever this says.
+    approval_mode: Literal["prompt", "deny", "allow"] = "prompt"
+    browser_headless: bool = True
+    browser_timeout_seconds: float = 30.0
+    code_timeout_seconds: float = 30.0
+
     # --- Runtime -------------------------------------------------------------
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     log_format: Literal["json", "console"] = "json"
@@ -55,6 +67,28 @@ class Settings(BaseSettings):
     response_language: str = "en"
 
     flags: FeatureFlags = Field(default_factory=FeatureFlags)
+
+    @property
+    def resolved_workspace_dir(self) -> Path:
+        """Where the employees' files live, separate from the platform's own."""
+        return self.workspace_dir or (self.data_dir / "workspace")
+
+    @property
+    def browser_tools_enabled(self) -> bool:
+        return self.flags.browser_tools
+
+    @property
+    def code_execution_enabled(self) -> bool:
+        return self.flags.code_execution
+
+    @property
+    def approvals_enabled(self) -> bool:
+        return self.flags.approvals
+
+    def ensure_workspace_dir(self) -> Path:
+        directory = self.resolved_workspace_dir
+        directory.mkdir(parents=True, exist_ok=True)
+        return directory
 
     @property
     def db_path(self) -> Path:

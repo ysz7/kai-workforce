@@ -12,10 +12,10 @@ and give KAI a task.
 
 ## Status
 
-**Phase 3 - Employee Runtime.** One digital employee now works end to end: it
-plans, executes inside a budget, and its result is verified before the task is
-allowed to complete. A task killed mid-run continues from where it stopped. The
-tools it works *with* - files, browser, search - arrive in Phase 4.
+**Phase 4 - Capability / Tool Layer.** Employees do things now: read and sort
+files inside one working directory, search the web, open a page and read it, run
+a short program under limits. Anything irreversible - overwriting a file,
+running generated code - waits for you to say yes. Phase 5 adds Computer Use.
 
 See `dev-assets/implementation-plan.md` for the full roadmap.
 
@@ -40,6 +40,7 @@ uv run kai spend               # what the calls have cost so far
 
 ```bash
 uv run kai employees           # who is declared
+uv run kai tools               # what this machine can do, and who may do it
 uv run kai run-task --employee researcher "Explain what SQLite WAL mode changes about concurrency, with sources."
 uv run kai resume              # pick up anything that was interrupted
 ```
@@ -54,6 +55,39 @@ result goes back through planning once, told what was missing.
 State is written to the task after every step, so `kill -9` mid-run loses
 nothing: `kai resume` continues from the last saved step instead of starting
 over.
+
+## Tools, and the brake on them
+
+An employee gets the tools its declaration lists and nothing else - `kai tools`
+prints the grants, so least privilege is something you can read rather than
+trust. The filesystem tools see one directory (`KAI_WORKSPACE_DIR`, by default
+`~/.kai-workforce/workspace`) and refuse any path that resolves outside it,
+symlinks followed.
+
+An action at HIGH or CRITICAL risk waits for a person. Overwriting a file that
+exists is HIGH; creating a new one is not. Running generated code always is.
+With nobody at the terminal the answer is no, so an unattended run cannot
+consent by being silent - set `KAI_APPROVAL_MODE=allow` if that is what you
+want on your own machine. See [ADR 0004](docs/adr/0004-approval-is-a-risk-level-not-a-list-of-actions.md).
+
+```bash
+uv run kai approvals           # what is waiting on a decision
+uv run kai approve <id>        # or: kai reject <id> --comment "not that file"
+```
+
+The browser is an optional extra, so installing the platform does not download a
+browser engine for a workforce that only reads files:
+
+```bash
+uv sync --extra browser && uv run playwright install chromium
+```
+
+### Adding a tool
+
+One file under `infrastructure/tools/` and one line in
+`infrastructure/tools/builtin.py`. Declare the parameters and the JSON Schema
+the model sees is generated from them; declare the risk and the gate applies it.
+Nothing in the runtime changes.
 
 ### Without a key, and without spending anything
 

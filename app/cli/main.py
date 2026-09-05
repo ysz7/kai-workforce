@@ -5,13 +5,16 @@ from __future__ import annotations
 import asyncio
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
+from uuid import UUID
 
 import typer
 
 from app.config.container import build_container, build_task_runner
 from app.config.settings import get_settings
+from domain.approvals.models import ApprovalState
 from domain.errors import KaiError, StorageNotInitializedError
 from domain.llm.models import LLMRequest, Message, RoutingHints, TaskKind
+from domain.policies.models import ActorKind, SimpleActor
 
 app = typer.Typer(
     name="kai",
@@ -54,6 +57,8 @@ def config() -> None:
     settings = get_settings()
     typer.echo(f"data_dir:      {settings.data_dir}")
     typer.echo(f"database:      {settings.resolved_database_url}")
+    typer.echo(f"workspace:     {settings.resolved_workspace_dir}")
+    typer.echo(f"approvals:     {settings.approval_mode}")
     typer.echo(f"llm_base_url:  {settings.llm_base_url}")
     typer.echo(f"llm_api_key:   {'set' if settings.llm_api_key else 'not set'}")
     typer.echo(f"default_model: {settings.llm_default_model}")
@@ -246,6 +251,93 @@ def employees() -> None:
             f"${definition.limits.max_cost_usd}, "
             f"{definition.limits.max_wall_time_seconds:.0f}s"
         )
+
+
+@app.command()
+def tools() -> None:
+    """Show the tools this machine offers, and who is allowed to call them.
+
+    Least privilege is not a claim to take on trust: this prints, per tool, the
+    employees that listed it. A tool nobody lists is a tool nobody can call.
+    """
+    container = build_container()
+    declared = container.employee_registry.list()
+    everything = SimpleActor("cli", ActorKind.USER, frozenset({"*"}))
+
+    for spec in container.tool_registry.list_specs(everything):
+        users = sorted(d.name for d in declared if spec.name in d.allowed_tools)
+        gate = "" if spec.reversible else "  [needs approval]"
+        typer.secho(f"{spec.name:<16}", fg="cyan", nl=False)
+        typer.echo(f"{spec.risk_level.value:<8}{', '.join(users) or 'nobody'}{gate}")
+        typer.echo(f"                 {spec.description.splitlines()[0]}")
+
+
+@app.command()
+def approvals() -> None:
+    """List the irreversible actions still waiting on a decision."""
+
+    async def _run() -> None:
+        container = build_container()
+        try:
+            pending = await container.approval_repository.list_pending()
+            if not pending:
+                typer.echo("Nothing is waiting for approval.")
+                return
+            for approval in pending:
+                request = approval.request
+                typer.secho(f"{request.id}", fg="yellow")
+                typer.echo(f"  action: {request.action}")
+                typer.echo(f"  risk:   {request.risk_level.value}")
+                typer.echo(f"  task:   {request.task_id}")
+                if request.reason:
+                    typer.echo(f"  why:    {request.reason}")
+        except StorageNotInitializedError as error:
+            typer.secho(f"{error} Run: uv run alembic upgrade head", fg="red", err=True)
+            raise typer.Exit(code=1) from error
+        finally:
+            await container.aclose()
+
+    asyncio.run(_run())
+
+
+@app.command()
+def approve(
+    approval_id: str = typer.Argument(..., help="The id shown by `kai approvals`."),
+    comment: str = typer.Option("", "--comment", "-c", help="Why."),
+) -> None:
+    """Approve a pending action."""
+    _resolve(approval_id, ApprovalState.APPROVED, comment)
+
+
+@app.command()
+def reject(
+    approval_id: str = typer.Argument(..., help="The id shown by `kai approvals`."),
+    comment: str = typer.Option("", "--comment", "-c", help="Why."),
+) -> None:
+    """Reject a pending action."""
+    _resolve(approval_id, ApprovalState.REJECTED, comment)
+
+
+def _resolve(approval_id: str, decision: ApprovalState, comment: str) -> None:
+    async def _run() -> None:
+        container = build_container()
+        try:
+            service = container.approval_service
+            if service is None:
+                typer.secho("Approvals are switched off in this configuration.", fg="red")
+                raise typer.Exit(code=1)
+            await service.resolve(UUID(approval_id), decision, comment=comment)
+            typer.secho(f"{decision.value.lower()}: {approval_id}", fg="green")
+        except ValueError as error:
+            typer.secho(f"'{approval_id}' is not an approval id.", fg="red", err=True)
+            raise typer.Exit(code=1) from error
+        except KaiError as error:
+            typer.secho(f"{type(error).__name__}: {error}", fg="red", err=True)
+            raise typer.Exit(code=1) from error
+        finally:
+            await container.aclose()
+
+    asyncio.run(_run())
 
 
 def _report(task) -> None:

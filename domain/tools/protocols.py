@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
+from domain.approvals.gate import RiskAssessment
 from domain.policies.models import Actor
 from domain.tools.models import ToolResult, ToolSpec
 
@@ -11,6 +12,19 @@ class Tool(Protocol):
     def spec(self) -> ToolSpec: ...
 
     async def execute(self, input_data: dict[str, Any]) -> ToolResult: ...
+
+
+@runtime_checkable
+class RiskAssessor(Protocol):
+    """An optional second half of `Tool`, for tools whose risk is per call.
+
+    Writing a file that does not exist and overwriting one that does are the
+    same tool and very different actions. A tool that can tell them apart says
+    so here; one that cannot simply does not implement this, and its declared
+    `ToolSpec.risk_level` stands.
+    """
+
+    def assess(self, input_data: dict[str, Any]) -> RiskAssessment | None: ...
 
 
 class ToolRegistry(Protocol):

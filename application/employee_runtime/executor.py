@@ -11,16 +11,23 @@ from that rather than from raw output.
 **Limits are checked before each step, not after the run.** An agent that loops
 does not fail loudly; it keeps working and keeps spending. Stopping at a budget
 is a normal outcome with a normal result, not a crash.
+
+**Every tool call passes the same three checks, in this order:** may this
+employee use this tool at all, does this particular call need a human, and what
+did it cost. Permission first, because refusing an unknown tool is cheaper than
+asking about it; approval second, because a question the user answers is only
+worth asking for a call that would otherwise happen.
 """
 
 from __future__ import annotations
 
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import structlog
 
+from application.employee_runtime.approvals import ApprovalGate
 from application.employee_runtime.transcript import Transcript
 from domain.capabilities.models import CapabilityRequirement
 from domain.employees.definition import EmployeeDefinition
@@ -34,10 +41,12 @@ from domain.llm.models import (
     ToolCallRequest,
 )
 from domain.llm.protocols import LLM
+from domain.secrets.models import redact
 from domain.tasks.plan import Observation, TaskPlan
 from domain.tasks.task import Task
 from domain.tools.models import ToolResult
 from domain.tools.protocols import ToolRegistry
+from domain.tools.telemetry import ToolCallLog, ToolCallRecord
 
 log = structlog.get_logger(__name__)
 
@@ -61,12 +70,16 @@ class Executor:
         tools: ToolRegistry,
         *,
         limits: ExecutionLimits | None = None,
+        approvals: ApprovalGate | None = None,
+        call_log: ToolCallLog | None = None,
         # Injected so tests can control time instead of waiting for it.
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._llm = llm
         self._tools = tools
         self._limits = limits or ExecutionLimits()
+        self._approvals = approvals or ApprovalGate()
+        self._call_log = call_log
         self._clock = clock
 
     async def run(
@@ -126,7 +139,7 @@ class Executor:
                 Message.assistant(response.content, tool_calls=response.tool_calls)
             )
             for call in response.tool_calls:
-                result = await self._invoke(call, definition)
+                result = await self._invoke(call, definition, task)
                 observation = self._observe(transcript.steps, call, result)
                 transcript = transcript.with_observation(observation).with_message(
                     Message.tool(observation.summary, call.id)
@@ -138,7 +151,7 @@ class Executor:
     # --- Acting ---------------------------------------------------------------
 
     async def _invoke(
-        self, call: ToolCallRequest, definition: EmployeeDefinition
+        self, call: ToolCallRequest, definition: EmployeeDefinition, task: Task
     ) -> ToolResult:
         try:
             tool = self._tools.get(call.name, definition)
@@ -148,28 +161,62 @@ class Executor:
             log.info("tool.refused", tool=call.name, employee=definition.name, reason=str(error))
             return ToolResult.failure(str(error))
 
+        gate = await self._approvals.check(tool, call.arguments, task, definition)
+        if not gate.allowed:
+            log.info("tool.not_approved", tool=call.name, task_id=str(task.id))
+            await self._record(task, call, ToolResult.failure(gate.reason))
+            return ToolResult.failure(gate.reason)
+
+        started = self._clock()
         try:
-            return await tool.execute(call.arguments)
+            result = await tool.execute(call.arguments)
         except Exception as error:  # a tool must not take the task down with it
             log.warning("tool.failed", tool=call.name, error=str(error))
-            return ToolResult.failure(f"{type(error).__name__}: {error}")
+            result = ToolResult.failure(f"{type(error).__name__}: {error}")
+
+        if not result.latency_ms:
+            result = replace(result, latency_ms=int((self._clock() - started) * 1000))
+        await self._record(task, call, result)
+        return result
+
+    async def _record(self, task: Task, call: ToolCallRequest, result: ToolResult) -> None:
+        """Account for the call. Never at the cost of the task itself."""
+        if self._call_log is None:
+            return
+        try:
+            await self._call_log.record(
+                ToolCallRecord(
+                    tool=call.name,
+                    success=result.success,
+                    latency_ms=result.latency_ms,
+                    task_id=task.id,
+                    input_data=call.arguments,
+                    output=result.output,
+                    error=result.error,
+                )
+            )
+        except Exception as error:  # telemetry is not worth failing a run over
+            log.warning("tool.telemetry_failed", tool=call.name, error=str(error))
 
     # --- Observing ------------------------------------------------------------
 
     def _observe(self, step: int, call: ToolCallRequest, result: ToolResult) -> Observation:
         """Interpret what just happened, explicitly, before deciding anything."""
+        # Redacted here, not at the log: this summary goes back into the
+        # transcript, which is persisted and sent to the model on the next step.
+        output = redact(result.output)
         if not result.success:
             summary = f"{call.name} failed: {result.error}"
-        elif not result.output:
+        elif not output:
             summary = f"{call.name} returned nothing."
         else:
-            summary = f"{call.name} returned: {result.output}"
+            summary = f"{call.name} returned: {output}"
 
         observation = Observation(
             step=step,
             summary=summary,
             succeeded=result.success,
-            details={"tool": call.name, "arguments": call.arguments},
+            details={"tool": call.name, "arguments": redact(call.arguments)},
         )
         log.info(
             "task.observed", step=step, tool=call.name, succeeded=result.success

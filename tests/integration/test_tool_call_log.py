@@ -1,0 +1,73 @@
+"""Tool-call accounting against the same contract, in memory and on SQLite."""
+
+from __future__ import annotations
+
+from uuid import uuid4
+
+import pytest
+
+from domain.tools.telemetry import ToolCallRecord
+from infrastructure.persistence.tool_call_repository import (
+    InMemoryToolCallLog,
+    SqliteToolCallLog,
+)
+
+
+@pytest.fixture(params=["in_memory", "sqlite"])
+def call_log(request: pytest.FixtureRequest):
+    if request.param == "in_memory":
+        return InMemoryToolCallLog()
+    return SqliteToolCallLog(request.getfixturevalue("session_factory"))
+
+
+def call(tool: str = "fs.read", *, task_id=None, success: bool = True) -> ToolCallRecord:
+    return ToolCallRecord(
+        tool=tool,
+        success=success,
+        latency_ms=12,
+        task_id=task_id,
+        input_data={"path": "notes.txt"},
+        output={"content": "hello"},
+        error=None if success else "boom",
+    )
+
+
+async def test_a_task_with_no_calls_reads_back_empty(call_log) -> None:
+    assert await call_log.list_for_task(uuid4()) == []
+
+
+async def test_calls_come_back_in_the_order_they_happened(call_log) -> None:
+    task_id = uuid4()
+    for tool in ("fs.list", "fs.read", "fs.move"):
+        await call_log.record(call(tool, task_id=task_id))
+
+    assert [c.tool for c in await call_log.list_for_task(task_id)] == [
+        "fs.list",
+        "fs.read",
+        "fs.move",
+    ]
+
+
+async def test_a_failure_is_kept_with_its_error(call_log) -> None:
+    task_id = uuid4()
+    await call_log.record(call(task_id=task_id, success=False))
+
+    recorded = (await call_log.list_for_task(task_id))[0]
+    assert not recorded.success
+    assert recorded.error == "boom"
+
+
+async def test_calls_belonging_to_another_task_are_not_returned(call_log) -> None:
+    await call_log.record(call(task_id=uuid4()))
+    assert await call_log.list_for_task(uuid4()) == []
+
+
+async def test_a_credential_is_masked_on_the_way_into_the_store(call_log) -> None:
+    task_id = uuid4()
+    await call_log.record(
+        ToolCallRecord(tool="api.send", success=True, task_id=task_id,
+                       input_data={"api_key": "sk-live"})
+    )
+
+    stored = (await call_log.list_for_task(task_id))[0]
+    assert stored.input_data == {"api_key": "***"}

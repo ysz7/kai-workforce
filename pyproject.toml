@@ -16,6 +16,12 @@ dependencies = [
     "pyyaml>=6.0.3",
 ]
 
+[project.optional-dependencies]
+# The browser is an extra: a workforce whose employees only read files should
+# not download a browser engine to install the platform.
+# uv sync --extra browser && uv run playwright install chromium
+browser = ["playwright>=1.48"]
+
 [project.scripts]
 kai = "app.cli.main:app"
 

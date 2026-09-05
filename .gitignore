@@ -11,3 +11,4 @@ dist/
 build/
 *.egg-info/
 dev-assets/
+CLAUDE.md

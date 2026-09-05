@@ -17,9 +17,14 @@ goals:
     priority: 3
 
 # Least privilege: an employee gets the tools it is listed for and nothing else.
-# Real tools arrive in Phase 4; until then the researcher works from what the
-# model knows and is explicit about that limit.
-allowed_tools: []
+# A researcher searches, reads pages and writes up what it found. It has no
+# fs.move and no code.run, because neither belongs to the job.
+allowed_tools:
+  - web.search
+  - browser.open
+  - browser.extract
+  - fs.read
+  - fs.write
 
 policies:
   - no_irreversible_actions
@@ -28,12 +33,13 @@ model_profile:
   capabilities:
     - TEXT_REASONING
     - LONG_CONTEXT
+    - TOOL_CALLING
   min_context_tokens: 16000
   temperature: 0.2
 
 memory_scope: EMPLOYEE_PRIVATE
 
 limits:
-  max_steps: 8
+  max_steps: 12
   max_cost_usd: 0.50
   max_wall_time_seconds: 600

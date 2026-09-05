@@ -6,7 +6,7 @@ from domain.tasks.task import TaskStatus
 from infrastructure.persistence.models import Base, EmployeeRow, TaskRow
 
 #: Tables that are infrastructure bookkeeping rather than user-owned data.
-NON_USER_TABLES = {"task_events", "llm_calls"}
+NON_USER_TABLES = {"task_events", "llm_calls", "tool_calls"}
 
 
 def test_every_user_table_carries_a_workspace_id() -> None:
