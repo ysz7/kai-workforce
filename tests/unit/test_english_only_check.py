@@ -28,10 +28,13 @@ def test_latin_source_passes(tmp_path: Path) -> None:
     assert scan(tmp_path) == []
 
 
+def cyrillic_word() -> str:
+    """Written as escapes so this test file stays Latin-only and passes its own check."""
+    return "\u0433\u043e\u0442\u043e\u0432\u043e"
+
+
 def test_non_latin_identifier_is_reported(tmp_path: Path) -> None:
-    # Written as escapes so this test file stays Latin-only and passes its own check.
-    cyrillic = "\u0433\u043e\u0442\u043e\u0432\u043e"
-    (tmp_path / "bad.py").write_text(f'STATUS = "{cyrillic}"\n', encoding="utf-8")
+    (tmp_path / "bad.py").write_text(f'STATUS = "{cyrillic_word()}"\n', encoding="utf-8")
     violations = scan(tmp_path)
     assert len(violations) == 1
     assert violations[0][0] == Path("bad.py")
@@ -40,3 +43,18 @@ def test_non_latin_identifier_is_reported(tmp_path: Path) -> None:
 def test_unscanned_file_types_are_left_alone(tmp_path: Path) -> None:
     (tmp_path / "data.txt").write_text("\u043e\u0442\u0447\u0451\u0442\n", encoding="utf-8")
     assert scan(tmp_path) == [], "runtime data may be in any language"
+
+
+def test_typography_is_not_a_language(tmp_path: Path) -> None:
+    # Degree sign, em dash, arrow: symbols carry no language, and banning them
+    # would make the rule about punctuation instead of about words.
+    (tmp_path / "ok.md").write_text(
+        "14 °C — see the diagram → here\n", encoding="utf-8"
+    )
+    assert scan(tmp_path) == []
+
+
+def test_a_non_latin_letter_is_still_caught_among_symbols(tmp_path: Path) -> None:
+    text = f"14 \u00b0C \u2014 {cyrillic_word()}\n"
+    (tmp_path / "bad.md").write_text(text, encoding="utf-8")
+    assert len(scan(tmp_path)) == 1

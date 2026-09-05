@@ -16,6 +16,14 @@ class RuntimeSettings(Protocol):
     log_level: str
     log_format: str
 
+    # --- Model access ---------------------------------------------------------
+    llm_api_key: str | None
+    llm_base_url: str
+    model_catalog_path: Path | None
+    llm_timeout_seconds: float
+    llm_retry_attempts: int
+    local_llm_base_url: str
+
     @property
     def resolved_database_url(self) -> str: ...
 

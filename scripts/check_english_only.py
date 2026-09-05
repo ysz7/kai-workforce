@@ -34,19 +34,24 @@ EXCLUDED_DIRS = {
     "build",
 }
 
-#: Scripts that are allowed to appear. Everything else is a policy violation.
-ALLOWED_SCRIPTS = ("LATIN", "COMMON", "INHERITED")
+#: The rule is about *words*, not typography. A degree sign, an em dash or an
+#: arrow carries no language; a Cyrillic or Han letter does. So only letters are
+#: policed, and only letters outside the Latin script are rejected.
+ALLOWED_LETTER_PREFIXES = ("LATIN", "MODIFIER")
 
 
 def _is_allowed(char: str) -> bool:
     if char.isascii():
         return True
+    if not unicodedata.category(char).startswith("L"):
+        # A symbol, mark, punctuation or space: not a word in another language.
+        return True
     try:
         name = unicodedata.name(char)
     except ValueError:
-        # Unnamed control or private-use character: not text we want in sources.
+        # An unnamed letter is not text we want in sources either way.
         return False
-    return name.split()[0] in ALLOWED_SCRIPTS
+    return name.split()[0] in ALLOWED_LETTER_PREFIXES
 
 
 def scan(root: Path) -> list[tuple[Path, int, str]]:

@@ -10,7 +10,8 @@ import typer
 
 from app.config.container import build_container
 from app.config.settings import get_settings
-from domain.errors import StorageNotInitializedError
+from domain.errors import KaiError, StorageNotInitializedError
+from domain.llm.models import LLMRequest, Message, RoutingHints, TaskKind
 
 app = typer.Typer(
     name="kai",
@@ -83,6 +84,97 @@ def tasks() -> None:
             await container.aclose()
 
     asyncio.run(_run())
+
+
+@app.command()
+def ask(
+    question: str = typer.Argument(..., help="What to ask."),
+    system: str = typer.Option(
+        "", "--system", "-s", help="Optional system prompt."
+    ),
+) -> None:
+    """Ask a model a question and report what it cost.
+
+    This is Phase 2's validation: a real answer through a real provider, with
+    the price of it on screen. Cost is shown from the first call because local
+    development pays for every token.
+    """
+
+    async def _run() -> None:
+        container = build_container()
+        try:
+            settings = container.settings
+            client = container.llm_for(
+                TaskKind.CONVERSATION, hints=RoutingHints(quality=0.7)
+            )
+            messages = [Message.user(question)]
+            if system:
+                messages.insert(0, Message.system(system))
+            elif settings.response_language != "en":
+                messages.insert(
+                    0, Message.system(f"Answer in {settings.response_language}.")
+                )
+
+            response = await client.generate(
+                LLMRequest(messages=tuple(messages), temperature=0.3)
+            )
+            typer.echo(response.content)
+            usage = response.usage
+            typer.secho(
+                f"\n[{response.model}] {usage.prompt_tokens} in / {usage.output_tokens} out"
+                f" - ${usage.cost_usd:.6f} - {usage.latency_ms} ms",
+                fg="cyan",
+            )
+        except KaiError as error:
+            typer.secho(f"{type(error).__name__}: {error}", fg="red", err=True)
+            raise typer.Exit(code=1) from error
+        finally:
+            await container.aclose()
+
+    asyncio.run(_run())
+
+
+@app.command()
+def spend() -> None:
+    """Show what has been spent on models so far."""
+
+    async def _run() -> None:
+        container = build_container()
+        try:
+            summary = await container.llm_call_log.total()
+            typer.echo(f"calls:         {summary.calls}")
+            typer.echo(f"prompt tokens: {summary.prompt_tokens}")
+            typer.echo(f"output tokens: {summary.output_tokens}")
+            typer.echo(f"cost:          ${summary.cost_usd:.6f}")
+        except StorageNotInitializedError as error:
+            typer.secho(
+                f"{error} Run: uv run alembic upgrade head", fg="red", err=True
+            )
+            raise typer.Exit(code=1) from error
+        finally:
+            await container.aclose()
+
+    asyncio.run(_run())
+
+
+@app.command()
+def models() -> None:
+    """Show the model catalog and which entry each kind of work defaults to."""
+    container = build_container()
+    catalog = container.model_catalog
+    defaults = {name: kind for kind, name in catalog.defaults.items()}
+
+    for entry in catalog.entries:
+        default_for = [k.value.lower() for k, n in catalog.defaults.items() if n == entry.name]
+        marker = f"  <- default for {', '.join(sorted(default_for))}" if default_for else ""
+        typer.echo(f"{entry.name:<10} {entry.provider}/{entry.model}{marker}")
+        typer.echo(
+            f"           ${entry.input_cost_per_1k_usd}/1k in, "
+            f"${entry.output_cost_per_1k_usd}/1k out, "
+            f"{entry.context_tokens} ctx"
+        )
+    if not defaults:
+        typer.echo("No defaults configured.")
 
 
 @app.command()

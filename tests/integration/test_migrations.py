@@ -22,10 +22,10 @@ def _alembic_config(database_url: str) -> Config:
     return config
 
 
-def test_migration_001_is_the_only_head() -> None:
+def test_the_history_is_a_single_line() -> None:
+    """Branching migrations on a one-file local database buy nothing but pain."""
     script = ScriptDirectory.from_config(_alembic_config("sqlite://"))
-    heads = script.get_heads()
-    assert list(heads) == ["001"]
+    assert len(script.get_heads()) == 1
 
 
 def test_migration_creates_the_declared_tables(tmp_path: Path) -> None:

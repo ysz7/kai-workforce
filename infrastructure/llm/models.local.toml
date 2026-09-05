@@ -1,0 +1,34 @@
+# A catalog of locally served models. Point KAI_MODEL_CATALOG_PATH at this file
+# to run the whole platform without a provider key and without spending anything:
+#
+#   KAI_MODEL_CATALOG_PATH=infrastructure/llm/models.local.toml uv run kai ask "..."
+#
+# It expects a local server on http://127.0.0.1:11434/v1 (Ollama's default) with
+# these models pulled. Costs are zero because they are: the price of a local call
+# is electricity, not billing.
+
+[models.local-balanced]
+provider = "local"
+model = "gpt-oss:20b"
+capabilities = ["TEXT_REASONING", "TOOL_CALLING", "STRUCTURED_OUTPUT", "LONG_CONTEXT", "CODE"]
+context_tokens = 131072
+input_cost_per_1k_usd = 0.0
+output_cost_per_1k_usd = 0.0
+quality = 0.6
+
+[models.local-fast]
+provider = "local"
+model = "lfm2.5:8b"
+capabilities = ["TEXT_REASONING", "TOOL_CALLING", "STRUCTURED_OUTPUT", "LONG_CONTEXT"]
+context_tokens = 32768
+input_cost_per_1k_usd = 0.0
+output_cost_per_1k_usd = 0.0
+quality = 0.4
+
+[defaults]
+planning = "local-balanced"
+execution = "local-balanced"
+verification = "local-fast"
+synthesis = "local-balanced"
+extraction = "local-fast"
+conversation = "local-balanced"

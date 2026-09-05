@@ -14,7 +14,15 @@ from functools import cached_property
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from domain.capabilities.models import CapabilityRequirement
+from domain.llm.models import RoutingHints, TaskKind
+from domain.llm.protocols import LLM, ModelRouter
+from domain.llm.telemetry import LLMCallLog
 from domain.tasks.repository import TaskRepository
+from infrastructure.llm.catalog import ModelCatalog
+from infrastructure.llm.factory import ProviderFactory
+from infrastructure.llm.retry import RetryPolicy
+from infrastructure.llm.router import CapabilityAwareModelRouter
 from infrastructure.observability.logging import configure_logging, get_logger
 from infrastructure.persistence.in_memory_task_repository import InMemoryTaskRepository
 from infrastructure.persistence.session import create_engine, create_session_factory
@@ -63,6 +71,54 @@ class Container:
 
         return SqliteTaskRepository(self.session_factory)
 
+    @cached_property
+    def llm_call_log(self) -> LLMCallLog:
+        if self._in_memory:
+            from infrastructure.persistence.llm_call_repository import InMemoryLLMCallLog
+
+            return InMemoryLLMCallLog()
+        from infrastructure.persistence.llm_call_repository import SqliteLLMCallLog
+
+        return SqliteLLMCallLog(self.session_factory)
+
+    # --- Models ---------------------------------------------------------------
+
+    @cached_property
+    def model_catalog(self) -> ModelCatalog:
+        return ModelCatalog.load(self.settings.model_catalog_path)
+
+    @cached_property
+    def model_router(self) -> ModelRouter:
+        return CapabilityAwareModelRouter(self.model_catalog)
+
+    @cached_property
+    def llm_factory(self) -> ProviderFactory:
+        return ProviderFactory(
+            catalog=self.model_catalog,
+            api_key=self.settings.llm_api_key,
+            base_url=self.settings.llm_base_url,
+            local_base_url=self.settings.local_llm_base_url,
+            call_log=self.llm_call_log,
+            retry_policy=RetryPolicy(attempts=self.settings.llm_retry_attempts),
+        )
+
+    def llm_for(
+        self,
+        task_kind: TaskKind,
+        requirement: CapabilityRequirement | None = None,
+        hints: RoutingHints | None = None,
+    ) -> LLM:
+        """Pick a model for a piece of work and hand back a client for it."""
+        choice = self.model_router.select(
+            task_kind, requirement or CapabilityRequirement(), hints
+        )
+        self.logger.info(
+            "llm.routed", task_kind=str(task_kind), model=choice.model, reason=choice.reason
+        )
+        return self.llm_factory.for_choice(choice)
+
     async def aclose(self) -> None:
+        if "llm_factory" in self.__dict__:
+            await self.llm_factory.aclose()
         if "engine" in self.__dict__:
             await self.engine.dispose()

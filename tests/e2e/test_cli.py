@@ -73,3 +73,50 @@ def test_tasks_explains_a_missing_schema_instead_of_a_stack_trace(monkeypatch, t
         assert "alembic upgrade head" in result.output
     finally:
         get_settings.cache_clear()
+
+
+def test_models_lists_the_catalog_and_its_defaults() -> None:
+    result = runner.invoke(app, ["models"])
+    assert result.exit_code == 0
+    assert "default for" in result.output
+
+
+def test_ask_without_a_key_explains_itself_instead_of_calling_out(monkeypatch) -> None:
+    from app.config.settings import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.delenv("KAI_LLM_API_KEY", raising=False)
+    try:
+        result = runner.invoke(app, ["ask", "Which city?"])
+        assert result.exit_code == 1
+        assert "KAI_LLM_API_KEY" in result.output
+    finally:
+        get_settings.cache_clear()
+
+
+def test_spend_reports_zero_on_a_fresh_database(monkeypatch, tmp_path) -> None:
+    import asyncio
+
+    from app.config.settings import get_settings
+    from infrastructure.persistence.models import Base
+    from infrastructure.persistence.session import create_engine
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("KAI_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("KAI_DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path / 'kai.db'}")
+    try:
+
+        async def _create() -> None:
+            engine = create_engine(get_settings().resolved_database_url)
+            async with engine.begin() as connection:
+                await connection.run_sync(Base.metadata.create_all)
+            await engine.dispose()
+
+        asyncio.run(_create())
+
+        result = runner.invoke(app, ["spend"])
+        assert result.exit_code == 0
+        assert "calls:         0" in result.output
+        assert "$0.000000" in result.output
+    finally:
+        get_settings.cache_clear()

@@ -90,3 +90,32 @@ def test_the_boundary_check_would_actually_catch_a_violation(tmp_path) -> None:
     offender.write_text("import httpx\nfrom sqlalchemy import select\n", encoding="utf-8")
 
     assert imported_roots(offender) & FORBIDDEN_IN_DOMAIN == {"httpx", "sqlalchemy"}
+
+
+VENDOR_NAMES = (
+    "openai",
+    "anthropic",
+    "claude",
+    "gpt",
+    "gemini",
+    "openrouter",
+    "mistral",
+    "llama",
+    "ollama",
+    "playwright",
+)
+
+
+def test_no_vendor_is_named_anywhere_in_the_domain() -> None:
+    """Phase 2 DoD: the domain describes capabilities, never products.
+
+    The moment a vendor name appears in `domain/`, swapping providers stops
+    being a configuration change.
+    """
+    offenders: dict[str, list[str]] = {}
+    for path in python_files("domain"):
+        text = path.read_text(encoding="utf-8").lower()
+        found = sorted(name for name in VENDOR_NAMES if name in text)
+        if found:
+            offenders[str(path.relative_to(REPO_ROOT))] = found
+    assert not offenders, f"vendor names leaked into the domain: {offenders}"

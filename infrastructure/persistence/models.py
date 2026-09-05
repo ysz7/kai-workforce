@@ -115,3 +115,26 @@ class TaskEventRow(Base):
     to_status: Mapped[str] = mapped_column(String(32), nullable=False)
     payload: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(nullable=False, default=_utcnow)
+
+
+class LLMCallRow(Base):
+    """Telemetry for every model call.
+
+    Recorded from the first call rather than added later: local development pays
+    for each token, and a looping agent gets expensive before it gets wrong.
+    """
+
+    __tablename__ = "llm_calls"
+    __table_args__ = (Index("ix_llm_calls_task_id", "task_id", "id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    task_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    model: Mapped[str] = mapped_column(String(128), nullable=False)
+    prompt_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cost_usd: Mapped[float] = mapped_column(nullable=False, default=0.0)
+    latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    success: Mapped[bool] = mapped_column(nullable=False, default=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(nullable=False, default=_utcnow)

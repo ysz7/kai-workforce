@@ -37,6 +37,12 @@ class Settings(BaseSettings):
     llm_api_key: str | None = None
     llm_base_url: str = "https://openrouter.ai/api/v1"
     llm_default_model: str = "anthropic/claude-sonnet-5"
+    #: Override the bundled model catalog. Changing models is a config change.
+    model_catalog_path: Path | None = None
+    llm_timeout_seconds: float = 120.0
+    llm_retry_attempts: int = 3
+    #: Where a locally served model listens. Used only by the 'local' provider.
+    local_llm_base_url: str = "http://127.0.0.1:11434/v1"
 
     # --- Runtime -------------------------------------------------------------
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"

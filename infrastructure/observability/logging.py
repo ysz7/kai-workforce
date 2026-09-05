@@ -18,9 +18,16 @@ import structlog
 CORRELATION_KEYS = ("correlation_id", "objective_id", "plan_id", "task_id", "assignment_id")
 
 
+#: Libraries that log every request at INFO. Their traffic is ours, already
+#: recorded with cost and latency, so their version of it is noise on a terminal.
+NOISY_LOGGERS = ("httpx", "httpcore", "aiosqlite", "asyncio")
+
+
 def configure_logging(level: str = "INFO", fmt: str = "json") -> None:
     """Install the structlog pipeline. Safe to call more than once."""
     logging.basicConfig(format="%(message)s", level=getattr(logging, level, logging.INFO))
+    for name in NOISY_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)
 
     renderer: Any = (
         structlog.processors.JSONRenderer()

@@ -11,6 +11,7 @@ from enum import StrEnum
 from typing import Any
 
 from domain.capabilities.models import Capability, CapabilityRequirement
+from domain.tools.models import ToolSpec
 
 
 class Role(StrEnum):
@@ -21,20 +22,39 @@ class Role(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
-class Message:
-    role: Role
-    content: str
-    name: str | None = None
-    tool_call_id: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
 class ToolCallRequest:
     """A tool invocation the model asked for."""
 
     id: str
     name: str
     arguments: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class Message:
+    role: Role
+    content: str
+    name: str | None = None
+    tool_call_id: str | None = None
+    #: Set on an assistant message that asked for tools, so a follow-up request
+    #: can replay the exchange the provider expects.
+    tool_calls: tuple[ToolCallRequest, ...] = ()
+
+    @classmethod
+    def system(cls, content: str) -> Message:
+        return cls(Role.SYSTEM, content)
+
+    @classmethod
+    def user(cls, content: str) -> Message:
+        return cls(Role.USER, content)
+
+    @classmethod
+    def assistant(cls, content: str, tool_calls: tuple[ToolCallRequest, ...] = ()) -> Message:
+        return cls(Role.ASSISTANT, content, tool_calls=tool_calls)
+
+    @classmethod
+    def tool(cls, content: str, tool_call_id: str) -> Message:
+        return cls(Role.TOOL, content, tool_call_id=tool_call_id)
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,9 +119,15 @@ class ModelChoice:
 
 @dataclass(frozen=True, slots=True)
 class LLMRequest:
+    """What the platform asks of a model.
+
+    `tools` carries domain tool specs, not a provider's JSON shape: turning them
+    into whatever the wire format wants is the adapter's job.
+    """
+
     messages: tuple[Message, ...]
     model: str | None = None
-    tools: tuple[dict[str, Any], ...] = ()
+    tools: tuple[ToolSpec, ...] = ()
     temperature: float = 0.2
     max_tokens: int | None = None
     response_format: dict[str, Any] | None = None

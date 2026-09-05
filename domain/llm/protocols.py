@@ -19,3 +19,13 @@ class ModelRouter(Protocol):
         required: CapabilityRequirement,
         hints: RoutingHints,
     ) -> ModelChoice: ...
+
+
+class LLMFactory(Protocol):
+    """Turns a routing decision into a client.
+
+    Callers pick a model by capability and get back something they can talk to,
+    without ever naming a provider.
+    """
+
+    def for_choice(self, choice: ModelChoice) -> LLM: ...

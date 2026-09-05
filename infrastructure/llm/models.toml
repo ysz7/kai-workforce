@@ -1,0 +1,41 @@
+# The model catalog. Editing this file is how you change models.
+#
+# `capabilities` uses the vocabulary in `domain/capabilities/models.py`.
+# Costs are per 1000 tokens in USD and are used to price every call, so keep
+# them current: a wrong number here shows up as a wrong bill in `kai spend`.
+
+[models.balanced]
+provider = "openrouter"
+model = "anthropic/claude-sonnet-5"
+capabilities = ["TEXT_REASONING", "TOOL_CALLING", "STRUCTURED_OUTPUT", "LONG_CONTEXT", "VISION", "CODE"]
+context_tokens = 200000
+input_cost_per_1k_usd = 0.003
+output_cost_per_1k_usd = 0.015
+quality = 0.9
+
+[models.fast]
+provider = "openrouter"
+model = "anthropic/claude-haiku-4.5"
+capabilities = ["TEXT_REASONING", "TOOL_CALLING", "STRUCTURED_OUTPUT", "LONG_CONTEXT"]
+context_tokens = 200000
+input_cost_per_1k_usd = 0.001
+output_cost_per_1k_usd = 0.005
+quality = 0.6
+
+[models.deep]
+provider = "openrouter"
+model = "anthropic/claude-opus-5"
+capabilities = ["TEXT_REASONING", "TOOL_CALLING", "STRUCTURED_OUTPUT", "LONG_CONTEXT", "VISION", "CODE"]
+context_tokens = 200000
+input_cost_per_1k_usd = 0.015
+output_cost_per_1k_usd = 0.075
+quality = 1.0
+
+# Which entry each kind of work reaches for first.
+[defaults]
+planning = "balanced"
+execution = "balanced"
+verification = "fast"
+synthesis = "balanced"
+extraction = "fast"
+conversation = "balanced"

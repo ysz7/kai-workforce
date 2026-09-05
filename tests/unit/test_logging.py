@@ -29,3 +29,12 @@ def test_a_misspelled_key_fails_loudly() -> None:
     # A silently dropped id only shows up when someone tries to read a trace.
     with pytest.raises(ValueError, match="taks_id"), correlation_context(taks_id="t-1"):
         pass
+
+
+def test_chatty_libraries_are_quietened() -> None:
+    import logging
+
+    from infrastructure.observability.logging import NOISY_LOGGERS
+
+    for name in NOISY_LOGGERS:
+        assert logging.getLogger(name).level >= logging.WARNING
