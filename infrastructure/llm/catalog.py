@@ -105,11 +105,21 @@ class ModelCatalog:
         raise ConfigurationError(f"Unknown model entry: {name}")
 
     def find(self, provider: str, model: str) -> ModelEntry | None:
-        """Look up an entry by what actually went over the wire, for pricing."""
-        for entry in self.entries:
-            if entry.provider == provider and entry.model == model:
+        """Look up an entry by what actually went over the wire, for pricing.
+
+        A provider may answer with a more specific name than it was asked for -
+        a dated snapshot of the model requested. That is useful in a trace and
+        must not cost the price: an exact match wins, and failing that the
+        longest configured name the answer starts with, so `claude-haiku-4-5`
+        prices `claude-haiku-4-5-20251001` while never matching a different
+        model that merely shares a prefix with a shorter name.
+        """
+        mine = [entry for entry in self.entries if entry.provider == provider]
+        for entry in mine:
+            if entry.model == model:
                 return entry
-        return None
+        snapshots = [entry for entry in mine if model.startswith(f"{entry.model}-")]
+        return max(snapshots, key=lambda entry: len(entry.model), default=None)
 
     def candidates(self, requirement: CapabilityRequirement) -> list[ModelEntry]:
         return [

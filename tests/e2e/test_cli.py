@@ -134,9 +134,34 @@ def test_tools_shows_who_may_call_each_tool(monkeypatch, tmp_path) -> None:
         assert result.exit_code == 0
         assert "fs.move" in result.output
         assert "organizer" in result.output
-        # Nobody declares code.run, so nobody can call it.
-        assert "code.run" in result.output
-        assert "nobody" in result.output
+        # Since Phase 8 exactly one employee may run code, and the grant says
+        # which. Before it, this line read "nobody" - the change is one
+        # declaration, and it is visible here without reading any of them.
+        code_line = next(line for line in result.output.splitlines() if "code.run" in line)
+        assert "analyst" in code_line
+    finally:
+        get_settings.cache_clear()
+
+
+def test_a_tool_no_one_declares_is_shown_as_reachable_by_nobody(monkeypatch, tmp_path) -> None:
+    """The default that least privilege rests on, checked where it is visible."""
+    from app.config.settings import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("KAI_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("KAI_WORKSPACE_DIR", str(tmp_path / "workspace"))
+    monkeypatch.setenv("KAI_EMPLOYEES_DIR", str(tmp_path / "employees"))
+    reader = tmp_path / "employees" / "reader"
+    reader.mkdir(parents=True)
+    (reader / "employee.yaml").write_text(
+        "name: reader\nrole: Reader\nallowed_tools: [fs.read]\ncapabilities: [FILE_ACCESS]\n",
+        encoding="utf-8",
+    )
+    try:
+        result = runner.invoke(app, ["tools"])
+        assert result.exit_code == 0
+        code_line = next(line for line in result.output.splitlines() if "code.run" in line)
+        assert "nobody" in code_line
     finally:
         get_settings.cache_clear()
 

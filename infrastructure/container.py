@@ -17,11 +17,12 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from domain.approvals.protocols import ApprovalRepository, ApprovalService
 from domain.browser.protocols import Browser
-from domain.capabilities.models import CapabilityRequirement
+from domain.capabilities.models import Capability, CapabilityRequirement
 from domain.computer.constraints import ComputerConstraints
 from domain.computer.models import Region
 from domain.computer.protocols import Computer, ScreenReader, StopSignal
 from domain.employees.protocols import EmployeeRegistry
+from domain.employees.validation import Issue, check_all
 from domain.llm.models import RoutingHints, TaskKind
 from domain.llm.protocols import LLM, ModelRouter
 from domain.llm.telemetry import LLMCallLog
@@ -151,6 +152,7 @@ class Container:
             local_base_url=self.settings.local_llm_base_url,
             call_log=self.llm_call_log,
             retry_policy=RetryPolicy(attempts=self.settings.llm_retry_attempts),
+            timeout_seconds=self.settings.llm_timeout_seconds,
         )
 
     def llm_for(
@@ -175,6 +177,27 @@ class Container:
     @cached_property
     def employee_registry(self) -> EmployeeRegistry:
         return YamlEmployeeRegistry(self.settings.employees_dir)
+
+    def tool_capabilities(self) -> dict[str, frozenset[Capability]]:
+        """What each tool on this machine lets an employee do.
+
+        Read off the specs rather than kept as a second list, so a tool that
+        gains a capability does not need remembering anywhere else.
+        """
+        from domain.policies.models import ActorKind, SimpleActor
+
+        everything = SimpleActor("container", ActorKind.SYSTEM, frozenset({"*"}))
+        return {spec.name: spec.capabilities for spec in self.tool_registry.list_specs(everything)}
+
+    def check_employees(self) -> tuple[Issue, ...]:
+        """What is wrong with the declarations, given the tools that exist here.
+
+        A declaration is written by hand and read by nobody until something goes
+        wrong with it, and the ways it goes wrong are quiet: a tool that is
+        never offered, a capability that is never searched. So it is checked
+        where both halves are known, which is here.
+        """
+        return check_all(self.employee_registry.list(), self.tool_capabilities())
 
     # --- Tools ----------------------------------------------------------------
 
@@ -376,8 +399,19 @@ class Container:
 
         Called before running anything: the declarations are the source of
         truth, and the table has to know about an employee before a task can be
-        assigned to it.
+        assigned to it. It is also the last moment at which a declaration can be
+        checked against the machine before work starts, so it is checked here -
+        logged, not raised. A workforce of four with one bad declaration should
+        run the other three, and the run that then goes wrong has a line saying
+        why in front of it.
         """
+        for issue in self.check_employees():
+            self.logger.warning(
+                "employee.declaration_issue",
+                employee=issue.employee,
+                severity=issue.severity.value,
+                detail=issue.message,
+            )
         return await self.employee_repository.sync(self.employee_registry.list())
 
     @cached_property

@@ -298,10 +298,19 @@ def resume() -> None:
 
 
 @app.command()
-def employees() -> None:
-    """List the declared employees.
+def employees(
+    strict: bool = typer.Option(
+        False, "--strict", help="Exit non-zero if any declaration has a problem."
+    ),
+) -> None:
+    """List the declared employees, and say what is wrong with any of them.
 
     Each one is a directory under `employees/`. Nothing here reads a class name.
+
+    The checks are the quiet failures: a tool this machine does not offer, a
+    capability nothing backs, work that will never be routed here because it was
+    not declared. None of them raises at runtime - the employee just does worse
+    for a reason nobody can see - so they are printed where somebody will look.
     """
     container = build_container()
     declared = container.employee_registry.list()
@@ -312,11 +321,23 @@ def employees() -> None:
         typer.secho(f"{definition.name}", fg="cyan", nl=False)
         typer.echo(f"  {definition.role.title}")
         typer.echo(f"  tools:  {', '.join(sorted(definition.allowed_tools)) or 'none'}")
+        can_do = ", ".join(sorted(c.value for c in definition.capabilities))
+        typer.echo(f"  can do: {can_do or 'nothing declared'}")
         typer.echo(
             f"  limits: {definition.limits.max_steps} steps, "
             f"${definition.limits.max_cost_usd}, "
             f"{definition.limits.max_wall_time_seconds:.0f}s"
         )
+
+    issues = container.check_employees()
+    if issues:
+        typer.echo("")
+        for issue in issues:
+            colour = "red" if issue.is_error else "yellow"
+            typer.secho(f"{issue.severity.value:<8}", fg=colour, nl=False)
+            typer.echo(f"{issue.employee}: {issue.message}")
+    if strict and issues:
+        raise typer.Exit(code=1)
 
 
 @app.command()

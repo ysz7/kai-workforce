@@ -146,10 +146,15 @@ def test_invalid_yaml_says_which_file(tmp_path: Path) -> None:
         YamlEmployeeRegistry(tmp_path).list()
 
 
-def test_two_employees_with_the_same_name_is_an_error(tmp_path: Path) -> None:
-    write_employee(tmp_path, "one", MINIMAL)
-    write_employee(tmp_path, "two", MINIMAL)
-    with pytest.raises(ConfigurationError, match="names must be unique"):
+def test_the_directory_is_the_employees_identity(tmp_path: Path) -> None:
+    """Which is also what makes two employees with one name impossible.
+
+    `employees/<name>/` is how a person finds the declaration and how a diff
+    reads, so a name that disagrees with its directory makes both misleading -
+    and a duplicate name would need two directories called the same thing.
+    """
+    write_employee(tmp_path, "somewhere-else", MINIMAL)
+    with pytest.raises(ConfigurationError, match="but sits in 'somewhere-else/'"):
         YamlEmployeeRegistry(tmp_path).list()
 
 

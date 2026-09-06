@@ -26,6 +26,15 @@ allowed_tools:
   - fs.read
   - fs.write
 
+# What kind of work this employee can be given. KAI searches by these, so a
+# capability left out here is work that never arrives - and one claimed without
+# a tool behind it is work that arrives and cannot be started. Each is backed by
+# something above: WEB_BROWSING by the search and browser tools, FILE_ACCESS by
+# fs.read and fs.write.
+capabilities:
+  - WEB_BROWSING
+  - FILE_ACCESS
+
 policies:
   - no_irreversible_actions
 

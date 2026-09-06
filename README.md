@@ -12,7 +12,13 @@ and give KAI a task.
 
 ## Status
 
-**Phase 7 - KAI Manager. This is the MVP.** You state what you want. KAI works
+**Phase 8 - First Specialized Employees.** Four of them, not thirty:
+`researcher` finds out what is true, `organizer` puts a folder in order,
+`operator` works interfaces that have no API, and `analyst` computes answers
+from data on this machine. Each is a directory under `employees/` with no Python
+behind it, and KAI routes work to them by what they declare they can do.
+
+You state what you want. KAI works
 out what that means, decides whether it needs doing at all or can just be
 answered, breaks it into tasks if it has to, gives each one to whoever is
 declared for it, and checks the result against criteria it wrote down before the
@@ -221,17 +227,32 @@ Create `employees/<name>/employee.yaml`. That is the whole change - no class, no
 registration, no edit to the runtime:
 
 ```yaml
-name: analyst
-role: Data Analyst
+name: translator
+role: Translator
 goals:
-  - text: Say what the data supports, and no more.
-allowed_tools: [fs.read]        # least privilege: it gets what it lists
+  - text: Say what the original says, not what it would have said.
+allowed_tools: [fs.read, fs.write]   # may it?  least privilege
+capabilities: [FILE_ACCESS]          # can it?  what KAI searches by
 model_profile:
-  capabilities: [TEXT_REASONING, CODE]
+  capabilities: [TEXT_REASONING, LONG_CONTEXT]
 limits:
-  max_steps: 6
-  max_cost_usd: 0.25
+  max_steps: 8
+  max_cost_usd: 0.50
 ```
+
+The two lists answer different questions, and a single one would silently answer
+one of them wrong. `allowed_tools` is what it may reach; `capabilities` is what
+work it can be given. Leave a capability out and that work never arrives; claim
+one with no tool behind it and the work arrives and cannot be started.
+
+```bash
+uv run kai employees            # both lists, plus what disagrees with this machine
+uv run kai employees --strict   # and exit non-zero if anything does
+```
+
+A declaration is checked when it loads - an unknown field, a temperature of 20,
+a budget of zero - and named by file, because the alternative is an employee
+that quietly has no tools.
 
 An optional `prompts/system.md` next to it gives the employee its own voice.
 All employees share one runtime; a second runtime would mean the difference
@@ -243,6 +264,14 @@ this directory.
 
 Edit `infrastructure/llm/models.toml`. Nothing in `domain/`, `application/` or an
 employee declaration names a model or a vendor, so that file is the whole change.
+
+Two catalogs ship. The default reaches models through OpenRouter - one key for
+many vendors. `models.anthropic.toml` talks to Anthropic directly:
+
+```bash
+export KAI_MODEL_CATALOG_PATH=infrastructure/llm/models.anthropic.toml
+# KAI_LLM_API_KEY=sk-ant-... in .env
+```
 
 A caller asks for what the work *needs* - reasoning, tool calling, a long
 context - and the router answers from the catalog. Precedence is: requirements

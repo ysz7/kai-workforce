@@ -8,9 +8,18 @@ on the next run. `tests/unit/test_kai_governance.py` enforces that by reading
 `employees/` and failing if any of those names appears in this package - prose
 included, because a name in a comment is a name that will be in a branch later.
 
+**The field is narrowed by what the work needs, before anybody is asked.** The
+plan says what each task requires; `EmployeeRegistry.find_by_capability` answers
+who offers it. That is what makes a declared capability worth declaring, and it
+is what keeps a workforce of thirty a search rather than thirty cards in a
+prompt. Narrowing that leaves nobody is discarded rather than obeyed - a task
+routed to no one is worse than a task routed imperfectly, and the requirement
+was a hint about the work, not a rule about the workforce.
+
 **One candidate needs no model call.** A workforce of one has nothing to choose
 between, and asking a model to pick from a list of one spends money to be told
-what was already true.
+what was already true. Narrowing often produces exactly that, which is the point:
+the only employee that can run code gets the task that needs code, for free.
 
 **A choice the model gets wrong is corrected, not obeyed.** Names are checked
 against the registry; an invented one falls back to the ranking below. The model
@@ -81,6 +90,7 @@ class CapabilityDelegator:
         *,
         context: SharedContext | None = None,
         avoid: set[str] | None = None,
+        requirement: CapabilityRequirement | None = None,
     ) -> tuple[EmployeeDefinition, SharedContext, str]:
         """Who should do this, what they are told, and why they were picked.
 
@@ -89,7 +99,7 @@ class CapabilityDelegator:
         them leaves nobody, the task goes back to the best of a bad field rather
         than failing for want of a second option.
         """
-        candidates = self._candidates(task)
+        candidates = self._candidates(task, requirement)
         if not candidates:
             raise DelegationError(
                 "No declared employee can take this task. Add one under employees/."
@@ -99,7 +109,8 @@ class CapabilityDelegator:
             candidates = remaining
 
         if len(candidates) == 1:
-            chosen, reason = candidates[0], "the only employee declared for this workspace"
+            chosen = candidates[0]
+            reason = _why_only(requirement)
             extra = SharedContext()
         else:
             chosen, reason, extra = await self._ask(task, candidates)
@@ -147,12 +158,27 @@ class CapabilityDelegator:
 
     # --- Internals ------------------------------------------------------------
 
-    def _candidates(self, task: Task) -> list[EmployeeDefinition]:
-        if self._requirement is not None:
-            found = self._registry.find_by_capability(self._requirement)
-            if found:
-                return found
-        return self._registry.list(task.workspace_id)
+    def _candidates(
+        self, task: Task, requirement: CapabilityRequirement | None
+    ) -> list[EmployeeDefinition]:
+        """Who could take this, narrowed by what it needs where that is known."""
+        wanted = requirement or self._requirement
+        everyone = self._registry.list(task.workspace_id)
+        if wanted is None or not wanted.required:
+            return everyone
+
+        found = self._registry.find_by_capability(wanted)
+        if not found:
+            # Nobody declares it. That is worth saying - it is usually a missing
+            # declaration rather than a missing employee - but not worth
+            # refusing over, so the whole workforce is considered instead.
+            log.info(
+                "kai.no_one_declares",
+                task_id=str(task.id),
+                needed=sorted(c.value for c in wanted.required),
+            )
+            return everyone
+        return found
 
     async def _ask(
         self, task: Task, candidates: list[EmployeeDefinition]
@@ -191,6 +217,16 @@ class CapabilityDelegator:
                 constraints=_lines(parsed.get("constraints")),
             ),
         )
+
+
+def _why_only(requirement: CapabilityRequirement | None) -> str:
+    """Why a field of one is a field of one - narrowed, or simply small."""
+    if requirement is not None and requirement.required:
+        return (
+            "the only employee that declares "
+            + ", ".join(sorted(c.value for c in requirement.required))
+        )
+    return "the only employee available for this task"
 
 
 def _best_by_tools(task: Task, candidates: list[EmployeeDefinition]) -> EmployeeDefinition:

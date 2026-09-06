@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from uuid import UUID, uuid4
 
+from domain.capabilities.models import Capability, CapabilityRequirement
 from domain.employees.limits import ExecutionLimits
 from domain.llm.models import ModelProfile
 from domain.memory.models import MemoryScope
@@ -50,6 +51,14 @@ class EmployeeDefinition:
     role: Role
     goals: tuple[Goal, ...] = ()
     allowed_tools: frozenset[str] = field(default_factory=frozenset)
+    #: What kinds of work this employee can take on - the vocabulary KAI
+    #: searches by. Distinct from `model_profile.capabilities`, which is what it
+    #: needs *from a model*: an employee that reads files needs no more of a
+    #: model than one that does not, and what makes it able to is the tools it
+    #: was granted. Declared here rather than derived from those tools so the
+    #: registry stays a reader of declarations, and checked against them by
+    #: `domain.employees.validation` so it cannot quietly claim more than it has.
+    capabilities: frozenset[Capability] = field(default_factory=frozenset)
     policies: frozenset[str] = field(default_factory=frozenset)
     model_profile: ModelProfile = field(default_factory=ModelProfile)
     memory_scope: MemoryScope = MemoryScope.EMPLOYEE_PRIVATE
@@ -76,6 +85,16 @@ class EmployeeDefinition:
     def actor_kind(self) -> ActorKind:
         return ActorKind.EMPLOYEE
 
+    def offers(self, requirement: CapabilityRequirement) -> bool:
+        """Whether this employee could take on work with these requirements.
+
+        An employee that declared nothing is not thereby able to do everything:
+        it falls back to what its model can do, which is reasoning and no more.
+        """
+        return requirement.is_satisfied_by(
+            self.capabilities or self.model_profile.capabilities
+        )
+
     @property
     def definition_hash(self) -> str:
         """Version of the declaration, used to detect edited employee files."""
@@ -85,6 +104,7 @@ class EmployeeDefinition:
                 "role": [self.role.title, self.role.description],
                 "goals": [[g.text, g.priority] for g in self.goals],
                 "allowed_tools": sorted(self.allowed_tools),
+                "capabilities": sorted(str(c) for c in self.capabilities),
                 "policies": sorted(self.policies),
                 "memory_scope": str(self.memory_scope),
                 "system_prompt": self.system_prompt,

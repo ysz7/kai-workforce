@@ -18,6 +18,7 @@ from enum import StrEnum
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
+from domain.capabilities.models import CapabilityRequirement
 from domain.tasks.task import Task
 from domain.workforce.assignment import TaskAssignment
 from domain.workspace.models import DEFAULT_WORKSPACE_ID, WorkspaceId
@@ -105,6 +106,12 @@ class Plan:
     objective_id: UUID
     tasks: tuple[Task, ...] = ()
     dependencies: tuple[tuple[UUID, UUID], ...] = ()  # (task_id, depends_on)
+    #: What each task needs from whoever takes it, by task id. A routing hint,
+    #: and deliberately not persisted: the plan's shape is a record, but what it
+    #: took to choose an employee is an input to a decision already recorded on
+    #: the assignment. A plan read back from storage has none, which is correct -
+    #: nothing re-delegates a plan that has already run.
+    requirements: dict[UUID, CapabilityRequirement] = field(default_factory=dict)
     revision: int = 1
     status: PlanStatus = PlanStatus.DRAFT
     rationale: str = ""

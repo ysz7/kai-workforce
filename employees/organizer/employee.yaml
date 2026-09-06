@@ -24,6 +24,11 @@ allowed_tools:
   - fs.move
   - fs.write
 
+# Files, and only files. It has no web tools, so it claims no web capability -
+# a declaration that claimed one would be handed work it could not begin.
+capabilities:
+  - FILE_ACCESS
+
 policies:
   - no_irreversible_actions
 

@@ -42,7 +42,11 @@ class Settings(BaseSettings):
     #: Where employee declarations are discovered. Adding an employee is adding
     #: a directory here, and nothing else.
     employees_dir: Path | None = None
-    llm_timeout_seconds: float = 120.0
+    #: How long to wait on a model. Unset means each provider's own default,
+    #: which differs for a reason: a hosted model that has not answered in two
+    #: minutes is not going to, and a model running on this laptop is often only
+    #: halfway through. Set it when you know better than both.
+    llm_timeout_seconds: float | None = None
     llm_retry_attempts: int = 3
     #: Where a locally served model listens. Used only by the 'local' provider.
     local_llm_base_url: str = "http://127.0.0.1:11434/v1"

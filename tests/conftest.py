@@ -29,3 +29,23 @@ async def session_factory(tmp_path: Path) -> AsyncIterator[async_sessionmaker[As
 @pytest.fixture
 def sqlite_repository(session_factory: async_sessionmaker[AsyncSession]) -> SqliteTaskRepository:
     return SqliteTaskRepository(session_factory)
+
+
+@pytest.fixture(autouse=True)
+def _ignore_the_developers_env_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No test reads `.env`, whoever is running it.
+
+    The rule this defends is one the project states plainly: the suite needs no
+    network and no provider key. A developer with a real `.env` broke that
+    silently - a test asserting that a missing key is explained instead of
+    called out would find a key, call out, and pass or fail on the weather.
+
+    Settings still read the environment, so a test that wants a value sets one.
+    What it cannot do is inherit one from a file it never mentioned.
+    """
+    from app.config.settings import Settings, get_settings
+
+    monkeypatch.setitem(Settings.model_config, "env_file", None)
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()

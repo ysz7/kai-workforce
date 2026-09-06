@@ -32,6 +32,7 @@ from uuid import UUID
 import structlog
 
 from application.kai.delegation import CapabilityDelegator
+from domain.capabilities.models import CapabilityRequirement
 from domain.policies.models import ActorKind
 from domain.tasks.progress import NullProgress, ProgressEvent, ProgressKind, ProgressSink
 from domain.tasks.task import Task, TaskStatus
@@ -173,7 +174,9 @@ class Supervisor:
             if not ready:
                 break
             for planned in ready:
-                outcome = await self._carry(planned, carried, objective_id)
+                outcome = await self._carry(
+                    planned, carried, objective_id, plan.requirements.get(planned.id)
+                )
                 outcomes.append(outcome)
                 if outcome.succeeded:
                     done.add(planned.id)
@@ -215,12 +218,16 @@ class Supervisor:
     # --- One task -------------------------------------------------------------
 
     async def _carry(
-        self, planned: Task, context: SharedContext, objective_id: UUID | None
+        self,
+        planned: Task,
+        context: SharedContext,
+        objective_id: UUID | None,
+        requirement: CapabilityRequirement | None = None,
     ) -> TaskOutcome:
         """Give one task to somebody, and try again if that is what the failure wants."""
         attempt = 1
         avoid: set[str] = set()
-        outcome = await self._attempt(planned, context, objective_id, avoid)
+        outcome = await self._attempt(planned, context, objective_id, avoid, requirement)
 
         while not outcome.succeeded and attempt < self._max_attempts:
             recovery = classify(outcome.task)
@@ -240,7 +247,7 @@ class Supervisor:
             # first is already in a terminal state, and a row that says FAILED
             # and later says COMPLETED is a row that lost the first attempt.
             outcome = await self._attempt(
-                _next_attempt(planned, attempt), context, objective_id, avoid
+                _next_attempt(planned, attempt), context, objective_id, avoid, requirement
             )
 
         return outcome
@@ -251,13 +258,14 @@ class Supervisor:
         context: SharedContext,
         objective_id: UUID | None,
         avoid: set[str],
+        requirement: CapabilityRequirement | None = None,
     ) -> TaskOutcome:
         # `DelegationError` is deliberately not caught here. It means the machine
         # has no declared employee at all - a fact about the workforce, not
         # about this task - and every replanned attempt would end in the same
         # place. It belongs to whoever owns the objective.
         chosen, passed, why = await self._delegator.choose(
-            planned, context=context, avoid=avoid
+            planned, context=context, avoid=avoid, requirement=requirement
         )
 
         await self._announce(

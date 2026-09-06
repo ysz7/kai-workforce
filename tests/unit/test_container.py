@@ -46,3 +46,33 @@ def test_an_in_memory_container_never_reaches_for_storage(tmp_path: Path) -> Non
     assert isinstance(container.task_repository, InMemoryTaskRepository)
     container.configure()
     assert not settings.ensured
+
+
+def test_the_configured_model_timeout_reaches_the_provider(tmp_path: Path) -> None:
+    """A setting that is documented and never read is worse than no setting.
+
+    This one was exactly that until Phase 8: `.env.example` described it,
+    `Settings` held it, and nothing passed it on - so a local model that needed
+    longer was cut off at whatever the adapter happened to default to.
+    """
+    from domain.capabilities.models import CapabilityRequirement
+    from domain.llm.models import TaskKind
+    from infrastructure.llm.catalog import ModelCatalog
+    from infrastructure.llm.factory import ProviderFactory
+    from infrastructure.llm.local import DEFAULT_TIMEOUT_SECONDS
+    from infrastructure.llm.router import CapabilityAwareModelRouter
+
+    catalog = ModelCatalog.load(
+        Path(__file__).resolve().parents[2] / "infrastructure/llm/models.local.toml"
+    )
+    choice = CapabilityAwareModelRouter(catalog).select(
+        TaskKind.EXECUTION, CapabilityRequirement(), None
+    )
+
+    configured = ProviderFactory(catalog=catalog, api_key=None, base_url="", timeout_seconds=42.0)
+    assert configured._build(choice)._timeout == 42.0
+
+    # Unset means the provider's own default, which is not one number: a local
+    # model gets minutes where a hosted one gets two.
+    default = ProviderFactory(catalog=catalog, api_key=None, base_url="")
+    assert default._build(choice)._timeout == DEFAULT_TIMEOUT_SECONDS

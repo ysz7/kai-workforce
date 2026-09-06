@@ -33,6 +33,7 @@ class ProviderFactory:
         local_base_url: str = LOCAL_BASE_URL,
         call_log: LLMCallLog | None = None,
         retry_policy: RetryPolicy | None = None,
+        timeout_seconds: float | None = None,
     ) -> None:
         self._catalog = catalog
         self._api_key = api_key
@@ -40,6 +41,12 @@ class ProviderFactory:
         self._local_base_url = local_base_url
         self._call_log = call_log
         self._retry_policy = retry_policy
+        # None means "each provider's own default", which is the right answer
+        # far more often than one number is: a hosted model that has not
+        # answered in two minutes is not going to, and a 20B model on a laptop
+        # is often only halfway through. Configuring it overrides both, because
+        # somebody who sets it has a machine in mind.
+        self._timeout = timeout_seconds
         self._clients: dict[tuple[str, str], LLM] = {}
 
     def for_choice(self, choice: ModelChoice) -> LLM:
@@ -60,11 +67,17 @@ class ProviderFactory:
                 base_url=self._base_url,
                 default_model=choice.model,
                 retry_policy=self._retry_policy,
+                **self._timeout_kwargs(),
             )
         if choice.provider == "openai":
             return OpenAIProvider(self._require_key(choice.provider))
         if choice.provider == "anthropic":
-            return AnthropicProvider(self._require_key(choice.provider))
+            return AnthropicProvider(
+                self._require_key(choice.provider),
+                default_model=choice.model,
+                retry_policy=self._retry_policy,
+                **self._timeout_kwargs(),
+            )
         if choice.provider == "gemini":
             return GeminiProvider(self._require_key(choice.provider))
         if choice.provider == "local":
@@ -72,11 +85,16 @@ class ProviderFactory:
                 base_url=self._local_base_url,
                 default_model=choice.model,
                 retry_policy=self._retry_policy,
+                **self._timeout_kwargs(),
             )
         raise ConfigurationError(
             f"Unknown provider '{choice.provider}'. Providers are registered in "
             "infrastructure/llm/factory.py and their models in models.toml."
         )
+
+    def _timeout_kwargs(self) -> dict[str, float]:
+        """Passed only when configured, so each provider keeps its own default."""
+        return {} if self._timeout is None else {"timeout_seconds": self._timeout}
 
     def _require_key(self, provider: str) -> str:
         if not self._api_key:

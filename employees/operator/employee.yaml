@@ -54,6 +54,14 @@ allowed_tools:
   - fs.read
   - fs.write
 
+# The only employee that claims COMPUTER_USE, which is what makes it findable
+# for work no API or DOM can reach. WEB_BROWSING and FILE_ACCESS come with the
+# tools it holds for the rest of the job.
+capabilities:
+  - COMPUTER_USE
+  - WEB_BROWSING
+  - FILE_ACCESS
+
 policies:
   - no_irreversible_actions
 

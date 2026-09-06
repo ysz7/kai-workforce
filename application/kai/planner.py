@@ -17,6 +17,13 @@ somebody happened to write them in cannot be run in parallel and cannot be
 checked for a cycle. Declared edges can be both, which is what makes Phase 12's
 concurrency a change of executor rather than a change of plan.
 
+**What a task needs is stated, so the workforce can be searched rather than
+read.** Each task carries the capabilities whoever takes it must offer. The
+delegator narrows by those before showing anything to a model, which is what
+makes a declared capability worth declaring - and what makes a workforce of
+thirty a search rather than thirty cards in a prompt. A task that names none is
+open to everybody, which is the right default for work that is mostly judgement.
+
 **A plan that cannot be read is still a plan.** A model that returns prose gets
 the objective back as a single task rather than an exception. One task that says
 exactly what the user asked for is a worse plan than a good decomposition and a
@@ -32,7 +39,7 @@ import structlog
 
 from application.kai.workforce import describe
 from application.prompts import render
-from domain.capabilities.models import CapabilityRequirement
+from domain.capabilities.models import Capability, CapabilityRequirement
 from domain.employees.definition import EmployeeDefinition
 from domain.llm.json_output import extract_object
 from domain.llm.models import LLMRequest, Message, RoutingHints, TaskKind
@@ -86,16 +93,21 @@ class ObjectivePlanner:
         # does not know its plan cannot be found from one, and `tasks.plan_id`
         # would be a column nothing ever filled in.
         plan_id = uuid4()
-        tasks, dependencies = self._read(parsed, objective, plan_id)
+        tasks, dependencies, requirements = self._read(parsed, objective, plan_id)
         if not tasks:
             log.warning("kai.plan_unreadable", objective_id=str(objective.id))
-            tasks, dependencies = (self._task(objective, objective.text, plan_id),), ()
+            tasks, dependencies, requirements = (
+                (self._task(objective, objective.text, plan_id),),
+                (),
+                {},
+            )
 
         plan = Plan(
             id=plan_id,
             objective_id=objective.id,
             tasks=tasks,
             dependencies=dependencies,
+            requirements=requirements,
             revision=revision,
             status=PlanStatus.DRAFT,
             rationale=str(parsed.get("rationale", "")).strip(),
@@ -115,13 +127,18 @@ class ObjectivePlanner:
 
     def _read(
         self, parsed: dict[str, object], objective: Objective, plan_id: UUID
-    ) -> tuple[tuple[Task, ...], tuple[tuple[UUID, UUID], ...]]:
+    ) -> tuple[
+        tuple[Task, ...],
+        tuple[tuple[UUID, UUID], ...],
+        dict[UUID, CapabilityRequirement],
+    ]:
         """Turn the model's task ids into real ones, dropping what cannot be used."""
         raw = parsed.get("tasks")
         if not isinstance(raw, list | tuple):
-            return (), ()
+            return (), (), {}
 
         tasks: dict[str, Task] = {}
+        requirements: dict[UUID, CapabilityRequirement] = {}
         for index, item in enumerate(raw):
             if not isinstance(item, dict):
                 continue
@@ -129,7 +146,11 @@ class ObjectivePlanner:
             if not goal:
                 continue
             key = str(item.get("id", "") or f"t{index + 1}")
-            tasks[key] = self._task(objective, goal, plan_id, priority=5 - min(index, 4))
+            task = self._task(objective, goal, plan_id, priority=5 - min(index, 4))
+            tasks[key] = task
+            needed = _capabilities(item.get("needs"))
+            if needed:
+                requirements[task.id] = CapabilityRequirement(required=needed)
             if len(tasks) == self._max_tasks:
                 break
 
@@ -146,7 +167,7 @@ class ObjectivePlanner:
                 if str(other) in tasks and str(other) != key:
                     dependencies.append((tasks[key].id, tasks[str(other)].id))
 
-        return tuple(tasks.values()), tuple(dependencies)
+        return tuple(tasks.values()), tuple(dependencies), requirements
 
     @staticmethod
     def _task(objective: Objective, goal: str, plan_id: UUID, *, priority: int = 5) -> Task:
@@ -168,6 +189,24 @@ class ObjectivePlanner:
             CapabilityRequirement(),
             RoutingHints(quality=0.8, cost_sensitivity=0.3),
         )
+
+
+def _capabilities(raw: object) -> frozenset[Capability]:
+    """What the model said a task needs, keeping only names that exist.
+
+    An invented capability is dropped rather than refused: a task open to the
+    whole workforce is a worse route than a narrowed one and a far better
+    outcome than a task nobody qualifies for.
+    """
+    if not isinstance(raw, list | tuple):
+        return frozenset()
+    known: set[Capability] = set()
+    for item in raw:
+        try:
+            known.add(Capability(str(item).strip().upper()))
+        except ValueError:
+            log.info("kai.unknown_capability", name=str(item)[:32])
+    return frozenset(known)
 
 
 def _constraints(objective: Objective) -> str:
