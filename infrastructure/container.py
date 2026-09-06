@@ -27,6 +27,7 @@ from domain.llm.protocols import LLM, ModelRouter
 from domain.llm.telemetry import LLMCallLog
 from domain.search.protocols import SearchEngine
 from domain.secrets.protocols import SecretResolver
+from domain.tasks.cancellation import Cancellations
 from domain.tasks.repository import TaskRepository
 from domain.tools.protocols import ToolRegistry
 from domain.tools.telemetry import ToolCallLog
@@ -39,6 +40,7 @@ from infrastructure.llm.router import CapabilityAwareModelRouter
 from infrastructure.observability.logging import configure_logging, get_logger
 from infrastructure.persistence.in_memory_task_repository import InMemoryTaskRepository
 from infrastructure.persistence.session import create_engine, create_session_factory
+from infrastructure.progress.broadcaster import InMemoryProgressBroadcaster
 from infrastructure.secrets.env import EnvSecretResolver
 from infrastructure.settings import RuntimeSettings
 from infrastructure.tools.builtin import build_registry
@@ -60,6 +62,9 @@ class Container:
         # `application`. The composition root owns the one wire that crosses
         # both, which is what it is for (ADR 0001).
         self._screen_reader = screen_reader
+        #: Set by an interface that answers approvals itself, before anything
+        #: builds the approval service. None means the terminal answers them.
+        self._confirmer: Callable[..., object] | None = None
 
     # --- Cross-cutting --------------------------------------------------------
 
@@ -76,6 +81,22 @@ class Container:
         # structlog's bound logger type is not stable enough to annotate.
         self.configure()
         return get_logger("kai")
+
+    @cached_property
+    def progress(self) -> InMemoryProgressBroadcaster:
+        """Where a running task says what it is doing, for whoever is watching.
+
+        Built lazily like everything else, and handed to the runtime as a
+        `ProgressSink`: the CLI never subscribes, so it never pays for a buffer.
+        """
+        return InMemoryProgressBroadcaster()
+
+    @cached_property
+    def cancellations(self) -> Cancellations:
+        """Which tasks a person has asked to stop, for this process's lifetime."""
+        from infrastructure.tasks.cancellation import InMemoryCancellations
+
+        return InMemoryCancellations()
 
     # --- Persistence ----------------------------------------------------------
 
@@ -305,6 +326,15 @@ class Container:
 
         return SqliteApprovalRepository(self.session_factory)
 
+    def use_approval_confirmer(self, confirmer: Callable[..., object]) -> None:
+        """Have approvals asked somewhere other than the terminal.
+
+        The local interface calls this before anything runs. Asking on stdin
+        when the person is looking at a browser would park every irreversible
+        action on a prompt nobody can see.
+        """
+        self._confirmer = confirmer
+
     @cached_property
     def approval_service(self) -> ApprovalService | None:
         """None means nobody can be asked - and so nothing irreversible happens."""
@@ -312,8 +342,17 @@ class Container:
             return None
         from infrastructure.approvals.service import LocalApprovalService
 
+        if self._confirmer is None:
+            return LocalApprovalService(
+                self.approval_repository, mode=self.settings.approval_mode
+            )
         return LocalApprovalService(
-            self.approval_repository, mode=self.settings.approval_mode
+            self.approval_repository,
+            mode=self.settings.approval_mode,
+            confirmer=self._confirmer,  # type: ignore[arg-type]
+            # An interface that supplies its own approver is the approver: the
+            # terminal's stdin says nothing about whether anyone is watching.
+            is_interactive=lambda: True,
         )
 
     @cached_property

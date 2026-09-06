@@ -51,12 +51,15 @@ async def build_runtime(container: Container, definition: EmployeeDefinition) ->
                 limits=definition.limits,
                 approvals=ApprovalGate(container.approval_service),
                 call_log=container.tool_call_log,
+                progress=container.progress,
+                cancellation=container.cancellations,
             ),
             verifier=Verifier(container.llm_for(*Verifier.routing())),
             tasks=container.task_repository,
             tools=container.tool_registry,
             limits=definition.limits,
             system_prompt=definition.system_prompt,
+            progress=container.progress,
         ),
     )
 
@@ -70,4 +73,5 @@ def build_task_runner(container: Container) -> TaskRunner:
         assignments=container.assignment_repository,
         registry=container.employee_registry,
         build_runtime=_runtime,
+        progress=container.progress,
     )

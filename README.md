@@ -12,12 +12,15 @@ and give KAI a task.
 
 ## Status
 
-**Phase 5 - Computer Use.** Employees do things now: read and sort files inside
-one working directory, search the web, open a page and read it, run a short
-program under limits - and, when none of that reaches the thing that has to be
-done, operate it on the screen. Anything irreversible - overwriting a file,
-running generated code, touching your desktop - waits for you to say yes.
-Phase 6 adds the local interface.
+**Phase 6 - Local KAI Interface.** Employees do things: read and sort files
+inside one working directory, search the web, open a page and read it, run a
+short program under limits - and, when none of that reaches the thing that has
+to be done, operate it on the screen. Anything irreversible - overwriting a
+file, running generated code, touching your desktop - waits for you to say yes,
+and since this phase you say it in a page rather than at a prompt. `kai serve`
+opens that page: give a goal, watch the run step by step, answer what it stops
+on, stop it if it is going nowhere, and open anything it did before.
+Phase 7 puts KAI the manager in front of it.
 
 See `dev-assets/implementation-plan.md` for the full roadmap.
 
@@ -37,6 +40,29 @@ Copy `.env.example` to `.env` and set `KAI_LLM_API_KEY`, then:
 uv run kai ask "Which city is the capital of Germany?"
 uv run kai spend               # what the calls have cost so far
 ```
+
+## The interface
+
+```bash
+uv run kai serve               # http://127.0.0.1:8765
+```
+
+One command and one process: the page, the employee runtime and the database are
+the same thing. That is what lets a tool call stop on a question and carry on the
+moment you answer it in the browser, with nothing queued and nothing polled.
+
+The page shows what is running - the step, the employee, the tool, its arguments
+and what came back - as it happens rather than after it. Approvals appear there,
+cost and result are on screen, a run can be stopped, and every past run can be
+opened again with its plan, its calls and its transitions.
+
+It binds to loopback and has no password. Those are the same decision: this
+surface starts tasks and approves irreversible actions, and it is safe without a
+login precisely because nothing off your machine can reach it. See
+[ADR 0006](docs/adr/0006-the-interface-runs-inside-the-process-it-watches.md).
+
+Everything below still works from the terminal - a machine with no browser must
+not need one.
 
 ## Giving an employee a task
 
@@ -76,6 +102,10 @@ want on your own machine. See [ADR 0004](docs/adr/0004-approval-is-a-risk-level-
 uv run kai approvals           # what is waiting on a decision
 uv run kai approve <id>        # or: kai reject <id> --comment "not that file"
 ```
+
+Under `kai serve` the same question appears in the page and the run really is
+parked on it: nothing is written until you answer, and a question nobody answers
+times out to a no.
 
 The browser is an optional extra, so installing the platform does not download a
 browser engine for a workforce that only reads files:
@@ -195,7 +225,7 @@ whatever is left. See [ADR 0003](docs/adr/0003-the-configured-default-model-wins
 
 | Directory | Layer | Rule |
 |---|---|---|
-| `app/` | Interface | CLI today, a local UI in Phase 6. The composition root lives here. |
+| `app/` | Interface | The CLI and the local UI. The composition root lives here. |
 | `application/` | Coordination | Orchestration and the one shared employee runtime. Depends on `domain/` only. |
 | `domain/` | Business logic | Protocols and values. Depends on nothing. |
 | `infrastructure/` | Adapters | Providers, persistence, tools. Depends on `domain/` only. |

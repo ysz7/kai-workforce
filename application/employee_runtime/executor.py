@@ -18,6 +18,12 @@ did it cost. Permission first, because refusing an unknown tool is cheaper than
 asking about it; approval second, because a question the user answers is only
 worth asking for a call that would otherwise happen.
 
+**Progress is announced, cancellation is asked for, and both are optional.**
+The loop tells a sink what it is doing and asks a signal whether it should stop,
+between steps and before each tool call. Both default to a component that does
+nothing, so a run nobody is watching costs nothing to be watchable, and a run
+nobody is cancelling never pays for the question.
+
 **The interface hierarchy is decided from what the employee has, and recorded.**
 The tools an employee is allowed to use are what say whether it can reach the
 world through an API, a browser or a screen, so the choice is made here, once,
@@ -50,7 +56,9 @@ from domain.llm.models import (
 )
 from domain.llm.protocols import LLM
 from domain.secrets.models import redact
+from domain.tasks.cancellation import CancellationSignal, NeverCancelled
 from domain.tasks.plan import Observation, TaskPlan
+from domain.tasks.progress import NullProgress, ProgressEvent, ProgressKind, ProgressSink
 from domain.tasks.task import Task
 from domain.tools.models import ToolResult
 from domain.tools.protocols import ToolRegistry
@@ -67,6 +75,9 @@ class StepOutcome:
     finished: bool = False
     answer: str = ""
     stopped_by: LimitKind | None = None
+    #: A person asked for this task to stop. Not a failure and not a limit: the
+    #: work that was done stands, and nothing more is attempted.
+    cancelled: bool = False
 
 
 class Executor:
@@ -80,6 +91,8 @@ class Executor:
         limits: ExecutionLimits | None = None,
         approvals: ApprovalGate | None = None,
         call_log: ToolCallLog | None = None,
+        progress: ProgressSink | None = None,
+        cancellation: CancellationSignal | None = None,
         # Injected so tests can control time instead of waiting for it.
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -88,6 +101,8 @@ class Executor:
         self._limits = limits or ExecutionLimits()
         self._approvals = approvals or ApprovalGate()
         self._call_log = call_log
+        self._progress = progress or NullProgress()
+        self._cancellation = cancellation or NeverCancelled()
         self._clock = clock
 
     async def run(
@@ -118,6 +133,15 @@ class Executor:
             )
 
         while True:
+            if self._cancellation.is_cancelled(task.id):
+                log.info("task.cancelled", task_id=str(task.id), steps=transcript.steps)
+                return StepOutcome(
+                    transcript=transcript,
+                    finished=True,
+                    answer=self._best_answer(transcript),
+                    cancelled=True,
+                )
+
             exceeded = self._limits.exceeded_by(
                 steps=transcript.steps,
                 cost_usd=transcript.cost_usd,
@@ -157,14 +181,69 @@ class Executor:
                 Message.assistant(response.content, tool_calls=response.tool_calls)
             )
             for call in response.tool_calls:
+                if self._cancellation.is_cancelled(task.id):
+                    # Asked to stop between two calls of the same step: the
+                    # remaining calls are not made, and the ones already made
+                    # stay in the transcript where the next reader can see them.
+                    return StepOutcome(
+                        transcript=transcript,
+                        finished=True,
+                        answer=self._best_answer(transcript),
+                        cancelled=True,
+                    )
+                await self._announce(
+                    task,
+                    ProgressKind.TOOL_CALL,
+                    f"{call.name}({self._arguments_of(call)})",
+                    step=transcript.steps,
+                    payload={"tool": call.name, "arguments": redact(call.arguments)},
+                )
                 result = await self._invoke(call, definition, task)
                 observation = self._observe(transcript.steps, call, result, definition)
                 transcript = transcript.with_observation(observation).with_message(
                     Message.tool(observation.summary, call.id)
                 )
+                await self._announce(
+                    task,
+                    ProgressKind.OBSERVATION,
+                    observation.summary,
+                    step=observation.step,
+                    payload={"succeeded": observation.succeeded, **observation.details},
+                )
 
             if on_step is not None:
                 await on_step(transcript)
+
+    # --- Announcing -----------------------------------------------------------
+
+    async def _announce(
+        self,
+        task: Task,
+        kind: ProgressKind,
+        message: str,
+        *,
+        step: int = 0,
+        payload: dict[str, object] | None = None,
+    ) -> None:
+        """Tell whoever is watching. Never at the cost of the work itself."""
+        try:
+            await self._progress.emit(
+                ProgressEvent(
+                    task_id=task.id,
+                    kind=kind,
+                    message=message,
+                    step=step,
+                    payload=dict(payload or {}),
+                    workspace_id=task.workspace_id,
+                )
+            )
+        except Exception as error:  # a watcher must not be able to fail a run
+            log.warning("progress.emit_failed", kind=kind.value, error=str(error))
+
+    @staticmethod
+    def _arguments_of(call: ToolCallRequest) -> str:
+        """The call as a person would read it, with credentials already gone."""
+        return ", ".join(f"{key}={value!r}" for key, value in redact(call.arguments).items())
 
     # --- Acting ---------------------------------------------------------------
 

@@ -72,6 +72,19 @@ class Settings(BaseSettings):
     #: one step of the loop can ask for several clicks.
     computer_max_actions: int = 200
 
+    # --- Local interface -----------------------------------------------------
+    #: The loopback address, and not configurable to anything else by accident.
+    #: This interface starts tasks and approves irreversible actions; it has no
+    #: authentication because it is not reachable, and binding it elsewhere
+    #: would quietly turn a local tool into an unauthenticated remote one.
+    ui_host: str = "127.0.0.1"
+    ui_port: int = 8765
+    #: How long an irreversible action waits for someone to answer in the
+    #: interface before it is refused.
+    ui_approval_timeout_seconds: float = 600.0
+    #: How many past tasks the history list loads.
+    ui_history_limit: int = 50
+
     # --- Runtime -------------------------------------------------------------
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     log_format: Literal["json", "console"] = "json"

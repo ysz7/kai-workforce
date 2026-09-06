@@ -18,6 +18,7 @@ from application.orchestrator import Failure, classify
 from domain.employees.definition import EmployeeDefinition
 from domain.employees.protocols import EmployeeRegistry
 from domain.policies.models import ActorKind
+from domain.tasks.progress import NullProgress, ProgressEvent, ProgressKind, ProgressSink
 from domain.tasks.repository import TaskRepository
 from domain.tasks.task import Task, TaskCreatedBy, TaskError, TaskResult, TaskStatus
 from domain.workforce.assignment import AssignmentOutcome, SharedContext, TaskAssignment
@@ -41,12 +42,16 @@ class TaskRunner:
         registry: EmployeeRegistry,
         build_runtime: Callable[[EmployeeDefinition], Awaitable[EmployeeRuntime]],
         max_attempts: int = MAX_TASK_ATTEMPTS,
+        progress: ProgressSink | None = None,
     ) -> None:
         self._tasks = tasks
         self._assignments = assignments
         self._registry = registry
         self._build_runtime = build_runtime
         self._max_attempts = max_attempts
+        # A failure classified here never reaches the runtime's announcer: the
+        # run it would have announced from is the one that just died.
+        self._progress = progress or NullProgress()
 
     # --- Starting -------------------------------------------------------------
 
@@ -85,6 +90,12 @@ class TaskRunner:
             task_id=str(task.id),
             employee=definition.name,
             assigned_by=assigned_by.value,
+        )
+        await self._announce(
+            task,
+            ProgressKind.STAGE,
+            f"Assigned to {definition.name}.",
+            payload={"employee": definition.name, "goal": task.goal},
         )
         return task, assignment
 
@@ -134,6 +145,12 @@ class TaskRunner:
     async def resumable(self, workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID) -> list[Task]:
         return await self._tasks.list_resumable(workspace_id)
 
+    async def history(
+        self, workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID, *, limit: int = 50
+    ) -> list[Task]:
+        """What has been run here lately, newest first."""
+        return await self._tasks.list_recent(workspace_id, limit=limit)
+
     async def resume(self, task: Task) -> Task:
         """Pick a task up where it stopped.
 
@@ -180,7 +197,35 @@ class TaskRunner:
             attempts=current.attempts + 1,
         )
         await self._tasks.save(failed, event)
+        await self._announce(
+            failed,
+            ProgressKind.RESULT,
+            f"{failure.error_type}: {failure.message}",
+            payload={"status": failed.status.value, "kind": failure.kind.value},
+        )
         return failed
+
+    async def _announce(
+        self,
+        task: Task,
+        kind: ProgressKind,
+        message: str,
+        *,
+        payload: dict[str, object] | None = None,
+    ) -> None:
+        try:
+            await self._progress.emit(
+                ProgressEvent(
+                    task_id=task.id,
+                    kind=kind,
+                    message=message,
+                    step=task.execution.step,
+                    payload=dict(payload or {}),
+                    workspace_id=task.workspace_id,
+                )
+            )
+        except Exception as error:  # a watcher must not be able to fail a run
+            log.warning("progress.emit_failed", kind=kind.value, error=str(error))
 
     async def _close(self, assignment: TaskAssignment, task: Task) -> None:
         outcome = (

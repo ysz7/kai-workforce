@@ -1,4 +1,10 @@
-"""The CLI is the only interface until the local UI arrives in Phase 6."""
+"""The command line, and the command that opens the local interface.
+
+Since Phase 6 the CLI is no longer the only surface: `kai serve` starts the
+local interface, which is where a task is normally run and watched. Everything
+here still works on its own, because a machine with no browser, or a run started
+from a script, must not need one.
+"""
 
 from __future__ import annotations
 
@@ -59,6 +65,7 @@ def config() -> None:
     typer.echo(f"database:      {settings.resolved_database_url}")
     typer.echo(f"workspace:     {settings.resolved_workspace_dir}")
     typer.echo(f"approvals:     {settings.approval_mode}")
+    typer.echo(f"interface:     http://{settings.ui_host}:{settings.ui_port}  (kai serve)")
     typer.echo(
         f"computer use:  {'on' if settings.computer_use_enabled else 'off'} "
         f"(desktop; the browser surface follows the browser tools)"
@@ -304,6 +311,44 @@ def stop(
     path = signal.engage(reason)
     typer.secho(f"Computer use stopped: {signal.reason}", fg="yellow")
     typer.echo(f"Release it with: kai stop --clear   ({path})")
+
+
+@app.command()
+def serve(
+    host: str = typer.Option("", "--host", help="Override the bind address."),
+    port: int = typer.Option(0, "--port", "-p", help="Override the port."),
+    reload: bool = typer.Option(False, "--reload", help="Restart on source changes."),
+) -> None:
+    """Open the local interface: run tasks, watch them, and approve actions.
+
+    One command, one process: the server, the employee runtime and the database
+    are the same thing, which is what lets the page park a tool call on a
+    question and answer it from a button.
+    """
+    import uvicorn
+
+    settings = get_settings()
+    bind = host or settings.ui_host
+    on = port or settings.ui_port
+    typer.secho(f"KAI Workforce on http://{bind}:{on}", fg="cyan")
+    if bind not in ("127.0.0.1", "localhost", "::1"):
+        # Said once, plainly. The interface starts tasks and approves
+        # irreversible actions, and it has no authentication because nothing
+        # off this machine is supposed to reach it.
+        typer.secho(
+            f"Warning: {bind} is not loopback. This interface has no "
+            "authentication and can start tasks on this machine.",
+            fg="yellow",
+            err=True,
+        )
+    uvicorn.run(
+        "app.ui.server:create_app",
+        factory=True,
+        host=bind,
+        port=on,
+        reload=reload,
+        log_level=settings.log_level.lower(),
+    )
 
 
 @app.command()

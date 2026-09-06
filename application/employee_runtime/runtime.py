@@ -12,11 +12,11 @@ execution, which is what lets a killed process pick the task up again.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 import structlog
 
-from application.employee_runtime.executor import Executor
+from application.employee_runtime.executor import Executor, StepOutcome
 from application.employee_runtime.planner import Planner
 from application.employee_runtime.transcript import RunState, Transcript
 from application.employee_runtime.verifier import Verifier
@@ -24,6 +24,7 @@ from domain.employees.definition import EmployeeDefinition
 from domain.employees.limits import ExecutionLimits, LimitKind
 from domain.errors import PlanningError
 from domain.tasks.plan import TaskPlan
+from domain.tasks.progress import NullProgress, ProgressEvent, ProgressKind, ProgressSink
 from domain.tasks.repository import TaskRepository
 from domain.tasks.task import Execution, Task, TaskResult, TaskStatus
 from domain.tools.protocols import ToolRegistry
@@ -52,6 +53,9 @@ class RuntimeDependencies:
     tools: ToolRegistry
     limits: ExecutionLimits
     system_prompt: str = ""
+    #: Where the run says what it is doing while it does it. Defaults to a sink
+    #: that drops everything, which is what the CLI wants.
+    progress: ProgressSink = field(default_factory=NullProgress)
 
 
 class EmployeeRuntime:
@@ -82,9 +86,15 @@ class EmployeeRuntime:
             if state.stage == STAGE_PLANNING:
                 task, state = await self._plan(task, state, assignment)
             elif state.stage == STAGE_EXECUTING:
-                task, state, result, stopped_by = await self._execute(task, state)
-                if result is not None:
-                    task, state = await self._verify(task, state, result, stopped_by, logger)
+                task, state, result, outcome = await self._execute(task, state)
+                # A deliberate stop skips verification: nobody claimed the
+                # work was finished, so there is nothing to check it against.
+                if outcome.cancelled:
+                    task, state = await self._cancel(task, state, result)
+                else:
+                    task, state = await self._verify(
+                        task, state, result, outcome.stopped_by, logger
+                    )
             else:  # a state written by an older version, or a corrupted resume
                 logger.warning("task.unknown_stage", stage=state.stage)
                 state = replace(state, stage=STAGE_PLANNING)
@@ -101,6 +111,7 @@ class EmployeeRuntime:
             task, event = task.transition_to(TaskStatus.PLANNING)
             await self._deps.tasks.save(task, event)
 
+        await self._announce(task, ProgressKind.STAGE, "Planning the work.")
         try:
             plan = await self._deps.planner.plan(
                 task,
@@ -133,11 +144,17 @@ class EmployeeRuntime:
         task, event = task.transition_to(TaskStatus.RUNNING)
         task = task.with_execution(Execution(step=transcript.steps, state=state.to_state()))
         await self._deps.tasks.save(task, event)
+        await self._announce(
+            task,
+            ProgressKind.PLAN,
+            plan.rationale or f"{len(plan.steps)} step(s) planned.",
+            payload=plan.to_dict(),
+        )
         return task, state
 
     async def _execute(
         self, task: Task, state: RunState
-    ) -> tuple[Task, RunState, TaskResult | None, LimitKind | None]:
+    ) -> tuple[Task, RunState, TaskResult, StepOutcome]:
         current = task
 
         async def persist(transcript: Transcript) -> None:
@@ -163,7 +180,7 @@ class EmployeeRuntime:
                 "stopped_by": outcome.stopped_by.value if outcome.stopped_by else None,
             },
         )
-        return current, state, result, outcome.stopped_by
+        return current, state, result, outcome
 
     async def _verify(
         self,
@@ -175,12 +192,19 @@ class EmployeeRuntime:
     ) -> tuple[Task, RunState]:
         task, event = task.transition_to(TaskStatus.VERIFYING)
         await self._deps.tasks.save(task, event)
+        await self._announce(task, ProgressKind.STAGE, "Checking the result against the goal.")
 
         verdict = await self._deps.verifier.verify(task, result, task.plan)
 
         if verdict.passed:
             task, event = task.transition_to(TaskStatus.COMPLETED, result=result)
             await self._deps.tasks.save(task, event)
+            await self._announce(
+                task,
+                ProgressKind.RESULT,
+                result.summary,
+                payload={"status": task.status.value, "cost_usd": task.cost_usd},
+            )
             return task, replace(state, stage=STAGE_DONE)
 
         if state.attempt < MAX_ATTEMPTS and stopped_by is None:
@@ -216,4 +240,54 @@ class EmployeeRuntime:
             attempts=task.attempts + 1,
         )
         await self._deps.tasks.save(task, event)
+        await self._announce(
+            task,
+            ProgressKind.RESULT,
+            reason,
+            payload={"status": task.status.value, "cost_usd": task.cost_usd},
+        )
         return task, replace(state, stage=STAGE_DONE)
+
+    async def _cancel(
+        self, task: Task, state: RunState, result: TaskResult
+    ) -> tuple[Task, RunState]:
+        """A person asked for this to stop.
+
+        The partial result is kept rather than discarded, and the task is not
+        verified: nobody claimed it was finished, so there is nothing to check
+        it against, and a rejected verdict would misreport a deliberate stop as
+        a failure.
+        """
+        task, event = task.transition_to(TaskStatus.CANCELLED, result=result)
+        await self._deps.tasks.save(task, event)
+        await self._announce(
+            task,
+            ProgressKind.RESULT,
+            "Cancelled. What was done up to this point has been kept.",
+            payload={"status": task.status.value, "cost_usd": task.cost_usd},
+        )
+        return task, replace(state, stage=STAGE_DONE)
+
+    # --- Announcing -----------------------------------------------------------
+
+    async def _announce(
+        self,
+        task: Task,
+        kind: ProgressKind,
+        message: str,
+        *,
+        payload: dict[str, object] | None = None,
+    ) -> None:
+        try:
+            await self._deps.progress.emit(
+                ProgressEvent(
+                    task_id=task.id,
+                    kind=kind,
+                    message=message,
+                    step=task.execution.step,
+                    payload=dict(payload or {}),
+                    workspace_id=task.workspace_id,
+                )
+            )
+        except Exception as error:  # a watcher must not be able to fail a run
+            log.warning("progress.emit_failed", kind=kind.value, error=str(error))

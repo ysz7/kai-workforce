@@ -36,5 +36,13 @@ class InMemoryTaskRepository:
             if task.workspace_id == workspace_id and task.status in RESUMABLE_STATUSES
         ]
 
+    async def list_recent(
+        self, workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID, *, limit: int = 50
+    ) -> list[Task]:
+        newest = sorted(self._tasks.values(), key=lambda t: t.created_at, reverse=True)
+        return [
+            deepcopy(task) for task in newest if task.workspace_id == workspace_id
+        ][:limit]
+
     async def events(self, task_id: UUID) -> list[TaskEvent]:
         return list(self._events.get(task_id, []))

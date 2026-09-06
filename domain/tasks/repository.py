@@ -22,4 +22,16 @@ class TaskRepository(Protocol):
         """Tasks that can be picked up again after a restart."""
         ...
 
+    async def list_recent(
+        self, workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID, *, limit: int = 50
+    ) -> list[Task]:
+        """The latest tasks, newest first, whatever state they ended in.
+
+        History is not the same question as resumability: an interface showing
+        what has been run needs the failures and the finished work too, and it
+        needs a bound, because a machine that has been used for a year should
+        not load a year to draw a list.
+        """
+        ...
+
     async def events(self, task_id: UUID) -> list[TaskEvent]: ...

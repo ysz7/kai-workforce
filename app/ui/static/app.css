@@ -1,0 +1,170 @@
+/* One page, two columns, no framework. The interface has to be readable at a
+   glance while a task runs, which is a typography problem, not a layout one. */
+
+:root {
+  color-scheme: light dark;
+  --bg: #fbfaf8;
+  --panel: #ffffff;
+  --ink: #1c1b19;
+  --muted: #6b6862;
+  --line: #e3e0da;
+  --accent: #b4573b;
+  --ok: #3f7d54;
+  --bad: #b3352c;
+  --warn: #a8761f;
+  --radius: 8px;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16150f;
+    --panel: #1e1d17;
+    --ink: #ece7dd;
+    --muted: #9b968b;
+    --line: #33312a;
+    --accent: #e08a68;
+    --ok: #7bbd8f;
+    --bad: #e0796e;
+    --warn: #d9ab5c;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.9rem 1.4rem;
+  border-bottom: 1px solid var(--line);
+}
+
+h1 { font-size: 1.05rem; margin: 0; letter-spacing: 0.02em; }
+h2 { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.09em;
+     color: var(--muted); margin: 1.6rem 0 0.6rem; }
+h2:first-child { margin-top: 0; }
+
+.spend { color: var(--muted); font-family: var(--mono); font-size: 0.8rem; }
+
+main {
+  display: grid;
+  grid-template-columns: minmax(280px, 22rem) 1fr;
+  gap: 1px;
+  background: var(--line);
+  min-height: calc(100vh - 3.4rem);
+}
+
+.panel { background: var(--panel); padding: 1.4rem; overflow-y: auto; }
+
+@media (max-width: 720px) {
+  main { grid-template-columns: 1fr; }
+}
+
+/* --- The form ------------------------------------------------------------ */
+
+label { display: block; font-size: 0.85rem; color: var(--muted); margin-bottom: 0.4rem; }
+
+textarea, select, button, input {
+  font: inherit;
+  color: inherit;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--bg);
+  padding: 0.5rem 0.6rem;
+}
+
+textarea { width: 100%; resize: vertical; }
+
+.row { display: flex; gap: 0.5rem; margin-top: 0.6rem; }
+.row select { flex: 1; }
+
+button {
+  cursor: pointer;
+  border-color: transparent;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+  padding: 0.5rem 1rem;
+}
+
+button:disabled { opacity: 0.5; cursor: progress; }
+button.secondary { background: transparent; color: var(--ink); border-color: var(--line); }
+
+.error { color: var(--bad); font-size: 0.85rem; }
+
+/* --- History ------------------------------------------------------------- */
+
+.history { list-style: none; margin: 0; padding: 0; }
+
+.history li {
+  border-top: 1px solid var(--line);
+  padding: 0.6rem 0;
+  cursor: pointer;
+}
+
+.history li:hover { color: var(--accent); }
+.history li.selected { color: var(--accent); font-weight: 600; }
+.history .goal { display: block; }
+.history .sub { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); }
+
+/* --- Status -------------------------------------------------------------- */
+
+.status { font-family: var(--mono); font-size: 0.72rem; }
+.status-COMPLETED { color: var(--ok); }
+.status-FAILED { color: var(--bad); }
+.status-CANCELLED { color: var(--warn); }
+
+#run-goal { font-size: 1rem; text-transform: none; letter-spacing: 0; color: var(--ink); }
+.meta { font-family: var(--mono); font-size: 0.76rem; color: var(--muted); margin-bottom: 0.7rem; }
+
+#run-result {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--ok);
+  border-radius: var(--radius);
+  padding: 0.8rem 1rem;
+  white-space: pre-wrap;
+}
+
+#run-result.failed { border-left-color: var(--bad); }
+
+/* --- Approvals ----------------------------------------------------------- */
+
+.approvals { list-style: none; margin: 0; padding: 0; }
+
+.approvals li {
+  border: 1px solid var(--warn);
+  border-radius: var(--radius);
+  padding: 0.8rem 1rem;
+  margin-bottom: 0.6rem;
+}
+
+.approvals .action { font-family: var(--mono); font-size: 0.82rem; word-break: break-word; }
+.approvals .why { color: var(--muted); font-size: 0.85rem; margin: 0.3rem 0 0.6rem; }
+
+/* --- Trace --------------------------------------------------------------- */
+
+.trace { list-style: none; margin: 0; padding: 0; }
+
+.trace li {
+  display: grid;
+  grid-template-columns: 3.2rem 6.5rem 1fr;
+  gap: 0.7rem;
+  border-top: 1px solid var(--line);
+  padding: 0.45rem 0;
+  font-size: 0.88rem;
+}
+
+.trace .step, .trace .kind { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); }
+.trace .message { white-space: pre-wrap; word-break: break-word; }
+.trace li.failed .message { color: var(--bad); }
+.trace li.kind-RESULT .message { font-weight: 600; }
+.trace .interface { font-family: var(--mono); font-size: 0.7rem; color: var(--muted); }

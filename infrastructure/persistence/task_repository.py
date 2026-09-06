@@ -74,6 +74,18 @@ class SqliteTaskRepository:
             )
             return [row_to_task(row) for row in rows]
 
+    async def list_recent(
+        self, workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID, *, limit: int = 50
+    ) -> list[Task]:
+        async with self._session() as session:
+            rows = await session.scalars(
+                select(TaskRow)
+                .where(TaskRow.workspace_id == str(workspace_id))
+                .order_by(TaskRow.created_at.desc(), TaskRow.id.desc())
+                .limit(limit)
+            )
+            return [row_to_task(row) for row in rows]
+
     async def events(self, task_id: UUID) -> list[TaskEvent]:
         async with self._session() as session:
             rows = await session.scalars(

@@ -98,3 +98,57 @@ async def test_result_and_error_payloads_round_trip(repository) -> None:
     assert loaded.result is not None
     assert loaded.result.output == {"count": 3}
     assert loaded.result.artifacts == ("report.md",)
+
+
+async def test_recent_tasks_are_newest_first_and_include_finished_ones(repository) -> None:
+    """History is a different question from resumability, and reads differently.
+
+    An interface listing what has been run needs the failures and the finished
+    work as much as the interrupted work, which `list_resumable` deliberately
+    leaves out.
+    """
+    from dataclasses import replace
+    from datetime import UTC, datetime, timedelta
+
+    now = datetime.now(UTC)
+    order = []
+    for index, status in enumerate(
+        [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.RUNNING]
+    ):
+        task = replace(
+            Task.create(f"Task {index}"), created_at=now + timedelta(seconds=index)
+        )
+        moved, event = task.transition_to(TaskStatus.RUNNING)
+        await repository.save(moved, event)
+        if status is not TaskStatus.RUNNING:
+            final, event = moved.transition_to(status)
+            await repository.save(replace(final, created_at=task.created_at), event)
+        order.append(task.id)
+
+    recent = await repository.list_recent()
+    assert [task.id for task in recent] == list(reversed(order))
+    assert {task.status for task in recent} == {
+        TaskStatus.COMPLETED,
+        TaskStatus.FAILED,
+        TaskStatus.RUNNING,
+    }
+
+
+async def test_recent_tasks_are_bounded_by_the_limit(repository) -> None:
+    for index in range(5):
+        await repository.save(Task.create(f"Task {index}"))
+
+    assert len(await repository.list_recent(limit=2)) == 2
+
+
+async def test_recent_tasks_stay_inside_their_workspace(repository) -> None:
+    from dataclasses import replace
+
+    from domain.workspace.models import WorkspaceId
+
+    mine = Task.create("Mine")
+    theirs = replace(Task.create("Theirs"), workspace_id=WorkspaceId(uuid4()))
+    await repository.save(mine)
+    await repository.save(theirs)
+
+    assert [task.id for task in await repository.list_recent()] == [mine.id]

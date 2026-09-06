@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>KAI Workforce</title>
+    <link rel="stylesheet" href="/static/app.css" />
+  </head>
+  <body>
+    <header>
+      <h1>KAI Workforce</h1>
+      <span class="spend" id="spend"></span>
+    </header>
+
+    <main>
+      <section class="panel" id="left">
+        <form id="new-task">
+          <label for="goal">What do you want done?</label>
+          <textarea id="goal" name="goal" rows="3" required
+            placeholder="Find the three most recent papers on X and summarise them."></textarea>
+          <div class="row">
+            <select id="employee" name="employee" aria-label="Who should do it"></select>
+            <button type="submit" id="run">Run</button>
+          </div>
+          <p class="error" id="form-error" hidden></p>
+        </form>
+
+        <h2>History</h2>
+        <ul class="history" id="history"></ul>
+      </section>
+
+      <section class="panel" id="right">
+        <div id="approvals" hidden>
+          <h2>Waiting for you</h2>
+          <ul class="approvals" id="approval-list"></ul>
+        </div>
+
+        <div id="run-header">
+          <h2 id="run-goal">Nothing selected</h2>
+          <div class="meta" id="run-meta"></div>
+          <button type="button" id="cancel" hidden>Stop this task</button>
+        </div>
+
+        <div id="run-result" hidden></div>
+
+        <h2>Trace</h2>
+        <ol class="trace" id="trace"></ol>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

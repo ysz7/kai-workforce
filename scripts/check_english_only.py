@@ -19,7 +19,24 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-SCANNED_SUFFIXES = {".py", ".sql", ".yaml", ".yml", ".toml", ".md", ".cfg", ".ini", ".mako"}
+#: The local interface is source like any other: an identifier, a comment or a
+#: label in the page is as ungreppable in Cyrillic as one in a module. Its text
+#: shown to the user is still English-only for the same reason the CLI's is -
+#: the language agents *answer* in is `KAI_RESPONSE_LANGUAGE`, which is data.
+SCANNED_SUFFIXES = {
+    ".py",
+    ".sql",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".md",
+    ".cfg",
+    ".ini",
+    ".mako",
+    ".html",
+    ".css",
+    ".js",
+}
 
 EXCLUDED_DIRS = {
     ".git",

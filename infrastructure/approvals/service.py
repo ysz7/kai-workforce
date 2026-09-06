@@ -9,6 +9,12 @@ worse than configuring:
 * **allow** - the user has explicitly said they do not want to be asked on this
   machine. Still recorded, so `kai approvals` shows what was done under it.
 
+Who gets asked is a separate question from whether to ask, and that is why the
+confirmer is injected. On a terminal it reads stdin; under the local interface
+it is a coroutine that parks until someone clicks in the browser. The rule -
+anything but an explicit yes is a no - is the same either way, and lives in the
+confirmer rather than being re-decided here.
+
 Every request is written to the database *before* it is answered. A process
 killed while waiting for a decision leaves a PENDING row, which is what makes
 the question survivable rather than lost.
@@ -16,8 +22,9 @@ the question survivable rather than lost.
 
 from __future__ import annotations
 
+import inspect
 import sys
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from enum import StrEnum
 from uuid import UUID
 
@@ -28,7 +35,8 @@ from infrastructure.observability.logging import get_logger
 
 log = get_logger(__name__)
 
-Confirmer = Callable[[ApprovalRequest], bool]
+#: Sync or async: a terminal answers immediately, a browser does not.
+Confirmer = Callable[[ApprovalRequest], "bool | Awaitable[bool]"]
 
 
 class ApprovalMode(StrEnum):
@@ -72,7 +80,7 @@ class LocalApprovalService:
         approval = Approval(request=action.redacted())
         await self._repository.save(approval)
 
-        decision, resolved_by = self._decide(action)
+        decision, resolved_by = await self._decide(action)
         await self._repository.save(
             approval.resolve(decision, resolved_by=resolved_by, comment=action.reason)
         )
@@ -86,12 +94,13 @@ class LocalApprovalService:
         )
         return decision
 
-    def _decide(self, action: ApprovalRequest) -> tuple[ApprovalState, str]:
+    async def _decide(self, action: ApprovalRequest) -> tuple[ApprovalState, str]:
         if self._mode is ApprovalMode.ALLOW:
             return ApprovalState.APPROVED, "configuration"
         if self._mode is ApprovalMode.DENY or not self._is_interactive():
             return ApprovalState.REJECTED, "no-approver"
-        approved = self._confirmer(action.redacted())
+        answer = self._confirmer(action.redacted())
+        approved = await answer if inspect.isawaitable(answer) else answer
         return (ApprovalState.APPROVED if approved else ApprovalState.REJECTED), "user"
 
     async def resolve(
