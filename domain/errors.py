@@ -116,6 +116,16 @@ class PlanningError(ExecutionError):
     """The model did not produce a usable plan."""
 
 
+class DelegationError(ExecutionError):
+    """There is no one to give this task to.
+
+    A configuration problem wearing an execution problem's clothes - a machine
+    with no declared employee cannot do work - but it surfaces mid-objective and
+    is answered by adding a declaration, so it is reported to the user with the
+    objective it stopped rather than at start-up.
+    """
+
+
 class VerificationFailedError(ExecutionError):
     """The result did not hold up, and no attempts are left."""
 

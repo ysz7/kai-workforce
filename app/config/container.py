@@ -15,6 +15,13 @@ from application.employee_runtime.executor import Executor
 from application.employee_runtime.planner import Planner
 from application.employee_runtime.runtime import EmployeeRuntime, RuntimeDependencies
 from application.employee_runtime.verifier import Verifier
+from application.kai.delegation import CapabilityDelegator
+from application.kai.intent import IntentReader
+from application.kai.manager import KaiManager
+from application.kai.planner import ObjectivePlanner
+from application.kai.supervisor import Supervisor
+from application.kai.synthesis import Synthesizer
+from application.kai.verification import ObjectiveVerifier
 from application.task_runner import TaskRunner
 from domain.employees.definition import EmployeeDefinition
 from infrastructure.container import Container
@@ -61,6 +68,35 @@ async def build_runtime(container: Container, definition: EmployeeDefinition) ->
             system_prompt=definition.system_prompt,
             progress=container.progress,
         ),
+    )
+
+
+def build_manager(container: Container) -> KaiManager:
+    """Assemble KAI.
+
+    Five model-facing components, each routed for what it is: comprehension and
+    decomposition get a good model, choosing from a short list gets a cheap one,
+    the answer the user reads gets a good one again. None of them names a model,
+    and none of them names an employee - the workforce arrives from the registry
+    and the work is done through `TaskExecution`, which is the task runner.
+    """
+    registry = container.employee_registry
+    return KaiManager(
+        intent=IntentReader(container.llm_for(*IntentReader.routing())),
+        planner=ObjectivePlanner(container.llm_for(*ObjectivePlanner.routing())),
+        supervisor=Supervisor(
+            execution=build_task_runner(container),
+            delegator=CapabilityDelegator(
+                container.llm_for(*CapabilityDelegator.routing()), registry
+            ),
+            progress=container.progress,
+        ),
+        verifier=ObjectiveVerifier(container.llm_for(*ObjectiveVerifier.routing())),
+        synthesizer=Synthesizer(container.llm_for(*Synthesizer.routing())),
+        registry=registry,
+        objectives=container.objective_repository,
+        plans=container.plan_repository,
+        progress=container.progress,
     )
 
 

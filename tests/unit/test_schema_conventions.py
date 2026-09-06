@@ -5,8 +5,11 @@ from __future__ import annotations
 from domain.tasks.task import TaskStatus
 from infrastructure.persistence.models import Base, EmployeeRow, TaskRow
 
-#: Tables that are infrastructure bookkeeping rather than user-owned data.
-NON_USER_TABLES = {"task_events", "llm_calls", "tool_calls"}
+#: Tables that are infrastructure bookkeeping rather than user-owned data, plus
+#: one join table. `plan_task_dependencies` holds nothing but three foreign
+#: keys; its workspace is whatever the plan's is, and a copy of that column
+#: would be a second answer to a question the plan already answers.
+NON_USER_TABLES = {"task_events", "llm_calls", "tool_calls", "plan_task_dependencies"}
 
 
 def test_every_user_table_carries_a_workspace_id() -> None:

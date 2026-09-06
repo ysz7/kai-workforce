@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import structlog
 
-from application.employee_runtime.prompts import render
+from application.prompts import render
 from domain.capabilities.models import CapabilityRequirement
 from domain.employees.definition import EmployeeDefinition
 from domain.errors import PlanningError

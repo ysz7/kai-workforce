@@ -20,6 +20,7 @@ from domain.approvals.models import Approval, ApprovalRequest
 from domain.employees.definition import EmployeeDefinition
 from domain.tasks.task import Task, TaskEvent
 from domain.tools.telemetry import ToolCallRecord
+from domain.workforce.protocols import Objective, Plan
 
 
 def task_summary(task: Task, *, running: bool = False) -> dict[str, Any]:
@@ -129,4 +130,65 @@ def employee(definition: EmployeeDefinition) -> dict[str, Any]:
             "max_cost_usd": definition.limits.max_cost_usd,
             "max_wall_time_seconds": definition.limits.max_wall_time_seconds,
         },
+    }
+
+
+# --- The manager --------------------------------------------------------------
+
+
+def objective_summary(item: Objective, *, thinking: bool = False) -> dict[str, Any]:
+    """One line of what has been asked for."""
+    return {
+        "id": str(item.id),
+        "text": item.text,
+        "status": item.status.value,
+        "thinking": thinking,
+        "created_at": item.created_at.isoformat(),
+        "finished_at": item.finished_at.isoformat() if item.finished_at else None,
+        "cost_usd": round(item.result.cost_usd, 6) if item.result else 0.0,
+    }
+
+
+def objective_detail(
+    item: Objective, *, thinking: bool = False, plans: list[Plan] | None = None
+) -> dict[str, Any]:
+    """One request, opened: what KAI made of it, and what it did about it.
+
+    Every revision is shown, not only the last. A superseded plan is the only
+    evidence of why a second attempt was needed, and hiding it would leave the
+    user reading an answer with no account of how it was arrived at.
+    """
+    return {
+        **objective_summary(item, thinking=thinking),
+        "constraints": item.constraints,
+        "acceptance_criteria": list(item.acceptance_criteria),
+        "result": (
+            {
+                "summary": item.result.summary,
+                "missing": list(item.result.missing),
+                "output": item.result.output,
+            }
+            if item.result
+            else None
+        ),
+        "plans": [plan_view(plan) for plan in plans or ()],
+    }
+
+
+def plan_view(plan: Plan) -> dict[str, Any]:
+    return {
+        "id": str(plan.id),
+        "revision": plan.revision,
+        "status": plan.status.value,
+        "rationale": plan.rationale,
+        "tasks": [
+            {
+                "id": str(task.id),
+                "goal": task.goal,
+                "status": task.status.value,
+                "cost_usd": round(task.cost_usd, 6),
+                "depends_on": [str(other) for other in sorted(plan.depends_on(task.id))],
+            }
+            for task in plan.tasks
+        ],
     }

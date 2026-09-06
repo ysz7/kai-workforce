@@ -168,3 +168,27 @@ button.secondary { background: transparent; color: var(--ink); border-color: var
 .trace li.failed .message { color: var(--bad); }
 .trace li.kind-RESULT .message { font-weight: 600; }
 .trace .interface { font-family: var(--mono); font-size: 0.7rem; color: var(--muted); }
+
+/* --- What KAI decided ----------------------------------------------------- */
+
+.hint { color: var(--muted); font-size: 0.8rem; margin: 0.5rem 0 0; }
+
+#run-plan { margin-top: 1rem; }
+
+.plan {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.7rem 0.9rem;
+  margin-bottom: 0.6rem;
+}
+
+.plan.superseded { opacity: 0.6; }
+.plan .why { color: var(--muted); font-size: 0.85rem; margin: 0 0 0.5rem; }
+.plan ol { margin: 0; padding-left: 1.2rem; }
+.plan li { margin-bottom: 0.2rem; }
+.plan .task-status { font-family: var(--mono); font-size: 0.7rem; color: var(--muted); }
+
+.criteria { list-style: none; margin: 0.4rem 0 0; padding: 0; }
+.criteria li { font-size: 0.85rem; color: var(--muted); }
+.criteria li::before { content: "\2713  "; color: var(--ok); }
+.criteria li.unmet::before { content: "\2717  "; color: var(--bad); }

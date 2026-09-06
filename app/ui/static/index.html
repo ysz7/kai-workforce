@@ -14,14 +14,15 @@
 
     <main>
       <section class="panel" id="left">
-        <form id="new-task">
-          <label for="goal">What do you want done?</label>
-          <textarea id="goal" name="goal" rows="3" required
+        <form id="new-objective">
+          <label for="request">What do you want done?</label>
+          <textarea id="request" name="request" rows="3" required
             placeholder="Find the three most recent papers on X and summarise them."></textarea>
           <div class="row">
-            <select id="employee" name="employee" aria-label="Who should do it"></select>
-            <button type="submit" id="run">Run</button>
+            <button type="submit" id="run">Ask KAI</button>
           </div>
+          <p class="hint">KAI decides what this takes and who does it.
+            <span id="workforce"></span></p>
           <p class="error" id="form-error" hidden></p>
         </form>
 
@@ -38,10 +39,11 @@
         <div id="run-header">
           <h2 id="run-goal">Nothing selected</h2>
           <div class="meta" id="run-meta"></div>
-          <button type="button" id="cancel" hidden>Stop this task</button>
+          <button type="button" id="cancel" hidden>Stop this</button>
         </div>
 
         <div id="run-result" hidden></div>
+        <div id="run-plan" hidden></div>
 
         <h2>Trace</h2>
         <ol class="trace" id="trace"></ol>

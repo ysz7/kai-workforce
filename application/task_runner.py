@@ -134,6 +134,30 @@ class TaskRunner:
             await self._close(assignment, final)
         return final
 
+    async def start(self, task: Task, assignment: TaskAssignment) -> Task:
+        """Run a task somebody else composed. Implements `TaskExecution`.
+
+        The manager creates its own tasks - a plan's dependency edges point at
+        ids that have to exist before anything runs - and picks the employee
+        itself. So this is `submit` with those two decisions already made:
+        persist both, then carry the task to a terminal state.
+        """
+        await self._tasks.save(task)
+        await self._assignments.save(assignment.accept())
+        log.info(
+            "task.started",
+            task_id=str(task.id),
+            employee_id=str(assignment.employee_id),
+            assigned_by=assignment.assigned_by.value,
+        )
+        await self._announce(
+            task,
+            ProgressKind.STAGE,
+            f"Starting: {task.goal}",
+            payload={"assigned_by": assignment.assigned_by.value},
+        )
+        return await self.run(task, assignment)
+
     async def submit_and_run(
         self, goal: str, employee_name: str, **kwargs: object
     ) -> Task:

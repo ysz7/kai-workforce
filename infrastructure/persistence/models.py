@@ -24,9 +24,12 @@ from sqlalchemy.types import JSON
 
 from domain.approvals.models import ApprovalState
 from domain.tasks.task import TaskStatus
+from domain.workforce.protocols import ObjectiveStatus, PlanStatus
 
 TASK_STATUS_VALUES = tuple(status.value for status in TaskStatus)
 APPROVAL_STATE_VALUES = tuple(state.value for state in ApprovalState)
+OBJECTIVE_STATUS_VALUES = tuple(status.value for status in ObjectiveStatus)
+PLAN_STATUS_VALUES = tuple(status.value for status in PlanStatus)
 
 
 class Base(DeclarativeBase):
@@ -235,3 +238,80 @@ class ApprovalRow(Base):
     resolved_at: Mapped[datetime | None] = mapped_column(nullable=True)
     resolved_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class ObjectiveRow(Base):
+    """What the user asked KAI for, and what became of it.
+
+    The user's own sentence is `text` and is never rewritten. What KAI read out
+    of it - the constraints, what would count as done - is stored beside it, so
+    a misreading stays visible next to the thing it misread.
+    """
+
+    __tablename__ = "objectives"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('" + "','".join(OBJECTIVE_STATUS_VALUES) + "')",
+            name="ck_objectives_status",
+        ),
+        Index("ix_objectives_workspace_created", "workspace_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default")
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    constraints: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    acceptance_criteria: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(nullable=False, default=_utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+
+class PlanRow(Base):
+    """One revision of KAI's decomposition of an objective.
+
+    Superseded plans are kept. What the manager thought on the first attempt is
+    the only evidence of why a second was needed.
+    """
+
+    __tablename__ = "plans"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('" + "','".join(PLAN_STATUS_VALUES) + "')",
+            name="ck_plans_status",
+        ),
+        UniqueConstraint("objective_id", "revision", name="uq_plans_objective_revision"),
+        Index("ix_plans_objective", "objective_id", "revision"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default")
+    objective_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("objectives.id", ondelete="CASCADE"), nullable=False
+    )
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    rationale: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(nullable=False, default=_utcnow)
+
+
+class PlanTaskDependencyRow(Base):
+    """One edge: this task cannot start until that one is done.
+
+    Edges rather than an ordered list, because an order is a claim nobody
+    checked. Edges can be checked for a cycle, and they say which tasks could
+    run at the same time - which is what Phase 12 needs and what a list loses.
+
+    The task columns carry no foreign key. A plan is recorded when KAI proposes
+    it, and a task becomes a row when somebody is given it, so the edges legally
+    precede both ends they point at. See migration 006.
+    """
+
+    __tablename__ = "plan_task_dependencies"
+
+    plan_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("plans.id", ondelete="CASCADE"), primary_key=True
+    )
+    task_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    depends_on: Mapped[str] = mapped_column(String(36), primary_key=True)

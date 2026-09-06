@@ -13,6 +13,12 @@ its assignment, and only then is the run scheduled. A page that got an id back
 for a task the database has never heard of would be lying, and a process killed
 one second later would have nothing to resume.
 
+**An objective is carried the same way, one level up.** Since Phase 7 the page
+asks KAI for an outcome rather than handing a task to an employee, and KAI's own
+work - reading the request, planning, delegating, checking - takes as long as
+the tasks it starts. So it too goes on the loop and the request returns an
+objective id, which is what the page then watches.
+
 **Cancelling has two cases, and they are not the same.** A task this process is
 running is asked to stop and stops itself between steps, keeping what it did. A
 task that is *not* running - left behind by a killed process, or never started -
@@ -28,10 +34,12 @@ from uuid import UUID
 
 import structlog
 
+from application.kai.manager import KaiManager
 from application.task_runner import TaskRunner
 from domain.tasks.cancellation import Cancellations
 from domain.tasks.repository import TaskRepository
 from domain.tasks.task import Task, TaskResult, TaskStatus
+from domain.workforce.protocols import Objective, ObjectiveResult
 from infrastructure.approvals.waiting import WaitingConfirmer
 
 log = structlog.get_logger(__name__)
@@ -49,15 +57,18 @@ class Runs:
         self,
         *,
         runner: TaskRunner,
+        manager: KaiManager,
         tasks: TaskRepository,
         cancellations: Cancellations,
         approvals: WaitingConfirmer,
     ) -> None:
         self._runner = runner
+        self._manager = manager
         self._tasks = tasks
         self._cancellations = cancellations
         self._approvals = approvals
         self._running: dict[UUID, asyncio.Task[Task]] = {}
+        self._objectives: dict[UUID, asyncio.Task[ObjectiveResult]] = {}
 
     # --- Starting -------------------------------------------------------------
 
@@ -70,6 +81,19 @@ class Runs:
         self._running[task.id] = run
         run.add_done_callback(lambda _: self._finished(task.id))
         return task
+
+    async def ask(self, request: str) -> Objective:
+        """Record the objective, schedule KAI, and hand the objective back."""
+        objective = await self._manager.receive(request)
+        work = asyncio.create_task(
+            self._manager.handle_objective(objective), name=f"kai-objective-{objective.id}"
+        )
+        self._objectives[objective.id] = work
+        work.add_done_callback(lambda _: self._objectives.pop(objective.id, None))
+        return objective
+
+    def is_thinking(self, objective_id: UUID) -> bool:
+        return objective_id in self._objectives
 
     def _finished(self, task_id: UUID) -> None:
         self._running.pop(task_id, None)
@@ -115,6 +139,23 @@ class Runs:
         log.info("task.cancelled_while_idle", task_id=str(task_id), status=task.status.value)
         return cancelled
 
+    async def cancel_objective(self, objective_id: UUID) -> bool:
+        """Stop KAI working on one objective, and every task it has running.
+
+        The objective's own coroutine is cancelled outright - it holds no
+        outside state, only the decision about what to do next - while its tasks
+        are asked to stop the cooperative way, which is what keeps whatever they
+        had already done.
+        """
+        work = self._objectives.get(objective_id)
+        for task_id in list(self._running):
+            self._cancellations.cancel(task_id, "The objective was stopped.")
+            self._approvals.release(task_id)
+        if work is None:
+            return False
+        work.cancel()
+        return True
+
     async def aclose(self) -> None:
         """Stop carrying anything, without leaving a run half-written.
 
@@ -122,10 +163,12 @@ class Runs:
         its own terminal state; only a run that ignores that is cancelled
         outright, and a run interrupted that way is resumable by construction.
         """
+        for work in self._objectives.values():
+            work.cancel()
         for task_id in list(self._running):
             self._cancellations.cancel(task_id, "The interface is shutting down.")
             self._approvals.release(task_id)
-        pending = list(self._running.values())
+        pending = [*self._running.values(), *self._objectives.values()]
         if not pending:
             return
         done, still_running = await asyncio.wait(pending, timeout=SHUTDOWN_GRACE_SECONDS)

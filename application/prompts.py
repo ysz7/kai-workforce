@@ -3,6 +3,10 @@
 Prompts are content, not code: they change far more often than the loop around
 them, and a diff on a `.md` file is readable in a way that a diff on an embedded
 triple-quoted string is not.
+
+It sits at the top of `application/` rather than inside the employee runtime
+because the manager writes prompts too, and KAI reaching into the runtime's
+package for a file loader would suggest a dependency that does not exist.
 """
 
 from __future__ import annotations
@@ -12,7 +16,7 @@ from pathlib import Path
 
 from domain.errors import ConfigurationError
 
-PROMPTS_DIR = Path(__file__).resolve().parents[2] / "prompts"
+PROMPTS_DIR = Path(__file__).resolve().parents[1] / "prompts"
 
 
 @lru_cache(maxsize=32)

@@ -31,7 +31,11 @@ from domain.tasks.cancellation import Cancellations
 from domain.tasks.repository import TaskRepository
 from domain.tools.protocols import ToolRegistry
 from domain.tools.telemetry import ToolCallLog
-from domain.workforce.repository import AssignmentRepository
+from domain.workforce.repository import (
+    AssignmentRepository,
+    ObjectiveRepository,
+    PlanRepository,
+)
 from infrastructure.employees.yaml_registry import YamlEmployeeRegistry
 from infrastructure.llm.catalog import ModelCatalog
 from infrastructure.llm.factory import ProviderFactory
@@ -389,6 +393,32 @@ class Container:
         )
 
         return SqliteAssignmentRepository(self.session_factory)
+
+    # --- The manager's own record ---------------------------------------------
+
+    @cached_property
+    def objective_repository(self) -> ObjectiveRepository:
+        if self._in_memory:
+            from infrastructure.persistence.objective_repository import (
+                InMemoryObjectiveRepository,
+            )
+
+            return InMemoryObjectiveRepository()
+        from infrastructure.persistence.objective_repository import SqliteObjectiveRepository
+
+        return SqliteObjectiveRepository(self.session_factory)
+
+    @cached_property
+    def plan_repository(self) -> PlanRepository:
+        if self._in_memory:
+            from infrastructure.persistence.plan_repository import InMemoryPlanRepository
+
+            # Paired with the task repository so an in-memory run reads a
+            # plan's task states from the same place a SQLite one does.
+            return InMemoryPlanRepository(self.task_repository)
+        from infrastructure.persistence.plan_repository import SqlitePlanRepository
+
+        return SqlitePlanRepository(self.session_factory)
 
     async def aclose(self) -> None:
         if "llm_factory" in self.__dict__:

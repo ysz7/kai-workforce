@@ -27,7 +27,7 @@ from typing import Any
 
 import structlog
 
-from application.employee_runtime.prompts import render
+from application.prompts import render
 from domain.capabilities.models import Capability, CapabilityRequirement
 from domain.computer.models import Screenshot, ScreenTarget, ScreenView
 from domain.llm.json_output import extract_object

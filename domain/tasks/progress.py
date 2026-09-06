@@ -36,6 +36,7 @@ class ProgressKind(StrEnum):
     """
 
     #: The task moved between statuses, or between stages of the runtime.
+    #: Also what the manager announces as it reads, plans and delegates.
     STAGE = "STAGE"
     #: A plan was produced. `payload["steps"]` carries it.
     PLAN = "PLAN"
@@ -58,12 +59,17 @@ class ProgressEvent:
     message: str
     step: int = 0
     payload: dict[str, Any] = field(default_factory=dict)
+    #: The objective this belongs to, when a manager is driving. An employee
+    #: run started directly has none, and an interface watching one objective
+    #: needs to tell KAI's own progress apart from every other run's.
+    objective_id: UUID | None = None
     workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID
     at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "task_id": str(self.task_id),
+            "objective_id": str(self.objective_id) if self.objective_id else None,
             "kind": self.kind.value,
             "message": self.message,
             "step": self.step,

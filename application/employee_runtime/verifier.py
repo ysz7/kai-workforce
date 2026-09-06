@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import structlog
 
-from application.employee_runtime.prompts import render
+from application.prompts import render
 from domain.capabilities.models import CapabilityRequirement
 from domain.employees.verification import Verdict
 from domain.llm.json_output import extract_object

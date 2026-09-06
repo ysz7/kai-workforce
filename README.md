@@ -12,15 +12,18 @@ and give KAI a task.
 
 ## Status
 
-**Phase 6 - Local KAI Interface.** Employees do things: read and sort files
-inside one working directory, search the web, open a page and read it, run a
-short program under limits - and, when none of that reaches the thing that has
-to be done, operate it on the screen. Anything irreversible - overwriting a
-file, running generated code, touching your desktop - waits for you to say yes,
-and since this phase you say it in a page rather than at a prompt. `kai serve`
-opens that page: give a goal, watch the run step by step, answer what it stops
-on, stop it if it is going nowhere, and open anything it did before.
-Phase 7 puts KAI the manager in front of it.
+**Phase 7 - KAI Manager. This is the MVP.** You state what you want. KAI works
+out what that means, decides whether it needs doing at all or can just be
+answered, breaks it into tasks if it has to, gives each one to whoever is
+declared for it, and checks the result against criteria it wrote down before the
+work started.
+
+The employees do the work: read and sort files inside one working directory,
+search the web, open a page and read it, run a short program under limits - and,
+when none of that reaches the thing that has to be done, operate it on the
+screen. Anything irreversible - overwriting a file, running generated code,
+touching your desktop - waits for you to say yes, in the page or at the prompt.
+Phase 8 adds specialised employees.
 
 See `dev-assets/implementation-plan.md` for the full roadmap.
 
@@ -41,6 +44,24 @@ uv run kai ask "Which city is the capital of Germany?"
 uv run kai spend               # what the calls have cost so far
 ```
 
+## Asking for something
+
+```bash
+uv run kai ask-kai "Read my meeting notes and write decisions.md, one line per person."
+uv run kai objectives          # what has been asked here, and how it went
+```
+
+You say what you want; you do not say who does it. KAI reads the request into
+acceptance criteria, decomposes it only if it has to - a question it can answer
+outright gets an answer, not a plan - picks an employee from what is declared,
+and judges the result against those criteria before you see it. If it falls
+short twice, you get the work that did succeed plus a plain list of what is
+missing, rather than a confident summary of eleven things you asked twenty of.
+
+Nothing in KAI names an employee. Add a directory under `employees/` and it is
+offered on the next run; that is enforced by a test that reads the directory.
+See [ADR 0007](docs/adr/0007-the-manager-decides-and-never-executes.md).
+
 ## The interface
 
 ```bash
@@ -51,10 +72,12 @@ One command and one process: the page, the employee runtime and the database are
 the same thing. That is what lets a tool call stop on a question and carry on the
 moment you answer it in the browser, with nothing queued and nothing polled.
 
-The page shows what is running - the step, the employee, the tool, its arguments
-and what came back - as it happens rather than after it. Approvals appear there,
-cost and result are on screen, a run can be stopped, and every past run can be
-opened again with its plan, its calls and its transitions.
+Type a goal into the page and the same thing happens: KAI reads it, plans it and
+hands it out. The trace shows the manager and its employees as one story - the
+step, who is doing it, the tool, its arguments and what came back - as it
+happens rather than after it. Approvals appear there, cost and result are on
+screen, a run can be stopped, and every past objective can be opened again with
+every plan revision it went through, including the ones it superseded.
 
 It binds to loopback and has no password. Those are the same decision: this
 surface starts tasks and approves irreversible actions, and it is safe without a
@@ -64,7 +87,10 @@ login precisely because nothing off your machine can reach it. See
 Everything below still works from the terminal - a machine with no browser must
 not need one.
 
-## Giving an employee a task
+## Giving one employee a task directly
+
+Still supported, and still the right thing for a script or a machine with no
+browser - but choosing the employee is the manager's job, not yours:
 
 ```bash
 uv run kai employees           # who is declared
@@ -209,7 +235,9 @@ limits:
 
 An optional `prompts/system.md` next to it gives the employee its own voice.
 All employees share one runtime; a second runtime would mean the difference
-between two employees had stopped being declarative.
+between two employees had stopped being declarative. KAI finds it on the next
+run - nothing in the manager names an employee, and a test proves it by reading
+this directory.
 
 ## Changing models
 

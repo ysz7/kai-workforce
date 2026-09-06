@@ -5,6 +5,12 @@ in a terminal. That is a statement about what the page shows, so the endpoints
 here exist to answer four questions and no more: what can I ask for, what is it
 doing right now, what does it need from me, and what happened last time.
 
+Since Phase 7 the first of those has a different answer. The page asks *KAI* for
+an outcome; the manager decides what tasks that means and who does each. The
+task endpoints stay, because a task is still the unit that runs and the trace is
+still drawn from one - but starting work now means stating a goal, not choosing
+an employee.
+
 **It binds to 127.0.0.1 and has no authentication.** Those two facts are one
 decision, not two. The interface starts tasks, approves irreversible actions and
 can stop the machine's screen; it is safe without a password precisely because
@@ -42,7 +48,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from app.config.container import build_container, build_task_runner
+from app.config.container import build_container, build_manager, build_task_runner
 from app.config.settings import Settings, get_settings
 from app.ui import views
 from app.ui.runs import Runs
@@ -65,6 +71,10 @@ HEARTBEAT_SECONDS = 15.0
 class NewTask(BaseModel):
     goal: str = Field(min_length=1)
     employee: str = Field(min_length=1)
+
+
+class NewObjective(BaseModel):
+    request: str = Field(min_length=1)
 
 
 class Decision(BaseModel):
@@ -107,6 +117,7 @@ def create_app(
         app.state.confirmer = confirmer
         app.state.runs = Runs(
             runner=build_task_runner(container),
+            manager=build_manager(container),
             tasks=container.task_repository,
             cancellations=container.cancellations,
             approvals=confirmer,
@@ -180,6 +191,50 @@ def _routes(app: FastAPI) -> None:
             raise HTTPException(status_code=404, detail=f"Unknown task: {task_id}")
         return views.task_summary(task, running=_runs(request).is_running(task_id))
 
+    # --- The manager ----------------------------------------------------------
+
+    @app.post("/api/objectives", status_code=201)
+    async def ask(request: Request, body: NewObjective) -> dict[str, Any]:
+        """State a goal. KAI decides what it means and who does it."""
+        objective = await _runs(request).ask(body.request.strip())
+        return views.objective_summary(objective, thinking=True)
+
+    @app.get("/api/objectives")
+    async def objectives(request: Request) -> dict[str, Any]:
+        runs = _runs(request)
+        settings: Settings = request.app.state.settings
+        recent = await _guarded(
+            _container(request).objective_repository.list_recent(
+                limit=settings.ui_history_limit
+            )
+        )
+        return {
+            "objectives": [
+                views.objective_summary(item, thinking=runs.is_thinking(item.id))
+                for item in recent
+            ]
+        }
+
+    @app.get("/api/objectives/{objective_id}")
+    async def objective(request: Request, objective_id: UUID) -> dict[str, Any]:
+        container = _container(request)
+        item = await _guarded(container.objective_repository.get(objective_id))
+        if item is None:
+            raise HTTPException(status_code=404, detail=f"Unknown objective: {objective_id}")
+        return views.objective_detail(
+            item,
+            thinking=_runs(request).is_thinking(objective_id),
+            plans=await _guarded(container.plan_repository.for_objective(objective_id)),
+        )
+
+    @app.post("/api/objectives/{objective_id}/cancel")
+    async def stop_objective(request: Request, objective_id: UUID) -> dict[str, Any]:
+        stopped = await _runs(request).cancel_objective(objective_id)
+        item = await _guarded(_container(request).objective_repository.get(objective_id))
+        if item is None:
+            raise HTTPException(status_code=404, detail=f"Unknown objective: {objective_id}")
+        return {**views.objective_summary(item), "stopped": stopped}
+
     @app.get("/api/approvals")
     async def approvals(request: Request) -> dict[str, Any]:
         """What is waiting, live first.
@@ -229,9 +284,16 @@ def _routes(app: FastAPI) -> None:
         }
 
     @app.get("/api/events")
-    async def events(request: Request, task: UUID | None = None) -> StreamingResponse:
+    async def events(
+        request: Request, task: UUID | None = None, objective: UUID | None = None
+    ) -> StreamingResponse:
+        stream = (
+            _objective_stream(request, objective)
+            if objective is not None
+            else _event_stream(request, task)
+        )
         return StreamingResponse(
-            _event_stream(request, task),
+            stream,
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
@@ -283,6 +345,78 @@ async def _event_stream(request: Request, task_id: UUID | None) -> AsyncIterator
             yield _sse(event.to_dict())
             if task_id is not None and event.kind is ProgressKind.RESULT:
                 return
+
+
+async def _objective_stream(request: Request, objective_id: UUID) -> AsyncIterator[str]:
+    """One objective's progress, and that of every task it starts.
+
+    KAI stamps its own events with the objective. Its employees do not - they
+    are running tasks and know nothing about a manager - so the task ids belong
+    to the objective's plan, and this follows them: seeded from whatever plan
+    revisions already exist, and extended whenever KAI announces a task it has
+    just handed out. That is what makes the trace read as one piece of work
+    rather than as a manager talking to itself.
+
+    It ends when the objective does, for the same reason a task stream ends when
+    its task does.
+    """
+    container = request.app.state.container
+    broadcaster = container.progress
+    async with broadcaster.subscribe() as queue:
+        tracked = await _tasks_of(container, objective_id)
+        item = await _objective_or_none(container, objective_id)
+        finished = item is not None and item.is_terminal
+
+        for past in broadcaster.recent(objective_id):
+            _track(tracked, past)
+            yield _sse(past.to_dict())
+        for task_id in sorted(tracked, key=str):
+            for past in broadcaster.recent(task_id):
+                yield _sse(past.to_dict())
+        if finished:
+            return
+
+        while True:
+            if await request.is_disconnected():
+                return
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=HEARTBEAT_SECONDS)
+            except TimeoutError:
+                yield ": keep-alive\n\n"
+                continue
+            mine = event.objective_id == objective_id
+            if not mine and event.task_id not in tracked:
+                continue
+            if mine:
+                _track(tracked, event)
+            yield _sse(event.to_dict())
+            if mine and event.kind is ProgressKind.RESULT:
+                return
+
+
+def _track(tracked: set[UUID], event) -> None:
+    """Follow a task the manager has just announced it delegated."""
+    raw = event.payload.get("task_id")
+    if raw:
+        tracked.add(UUID(str(raw)))
+    for task in event.payload.get("tasks") or ():
+        if isinstance(task, dict) and task.get("id"):
+            tracked.add(UUID(str(task["id"])))
+
+
+async def _tasks_of(container, objective_id: UUID) -> set[UUID]:
+    try:
+        plans = await container.plan_repository.for_objective(objective_id)
+    except StorageNotInitializedError:
+        return set()
+    return {task.id for plan in plans for task in plan.tasks}
+
+
+async def _objective_or_none(container, objective_id: UUID):
+    try:
+        return await container.objective_repository.get(objective_id)
+    except StorageNotInitializedError:
+        return None
 
 
 def _sse(payload: dict[str, Any]) -> str:

@@ -1,4 +1,8 @@
-"""Persistence contract for assignments: who was asked to do what, by whom."""
+"""Persistence contracts for the manager's own record.
+
+What the user asked for, what KAI decided it meant, and who was asked to do
+what. No SQL crosses this boundary.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +11,8 @@ from uuid import UUID
 
 from domain.employees.definition import EmployeeId
 from domain.workforce.assignment import TaskAssignment
+from domain.workforce.protocols import Objective, Plan
+from domain.workspace.models import DEFAULT_WORKSPACE_ID, WorkspaceId
 
 
 class AssignmentRepository(Protocol):
@@ -23,3 +29,35 @@ class AssignmentRepository(Protocol):
         ...
 
     async def for_employee(self, employee_id: EmployeeId) -> list[TaskAssignment]: ...
+
+
+class ObjectiveRepository(Protocol):
+    async def save(self, objective: Objective) -> None: ...
+
+    async def get(self, objective_id: UUID) -> Objective | None: ...
+
+    async def list_recent(
+        self, workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID, *, limit: int = 50
+    ) -> list[Objective]:
+        """What has been asked for here lately, newest first."""
+        ...
+
+
+class PlanRepository(Protocol):
+    """Plans and their task dependencies, stored together.
+
+    One contract rather than two, because a plan without its dependency edges
+    is not a plan - it is a list of tasks in an order nobody promised.
+    """
+
+    async def save(self, plan: Plan) -> None: ...
+
+    async def get(self, plan_id: UUID) -> Plan | None: ...
+
+    async def for_objective(self, objective_id: UUID) -> list[Plan]:
+        """Every revision, newest first. A superseded plan is kept, not deleted.
+
+        What KAI thought on the first attempt is the only evidence of why a
+        second was needed.
+        """
+        ...

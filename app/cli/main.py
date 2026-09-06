@@ -15,7 +15,7 @@ from uuid import UUID
 
 import typer
 
-from app.config.container import build_container, build_task_runner
+from app.config.container import build_container, build_manager, build_task_runner
 from app.config.settings import get_settings
 from domain.approvals.models import ApprovalState
 from domain.errors import KaiError, StorageNotInitializedError
@@ -192,6 +192,60 @@ def models() -> None:
         )
     if not defaults:
         typer.echo("No defaults configured.")
+
+
+@app.command(name="ask-kai")
+def ask_kai(
+    objective: str = typer.Argument(..., help="What you want, in your own words."),
+) -> None:
+    """Give KAI a goal. It decides what has to happen and who does it.
+
+    This is the normal way in from Phase 7 on: `run-task` still exists and still
+    hands work to a named employee, but choosing the employee is the manager's
+    job, not the user's.
+    """
+
+    async def _run() -> None:
+        container = build_container()
+        try:
+            await container.sync_employees()
+            manager = build_manager(container)
+            received = await manager.receive(objective)
+            result = await manager.handle_objective(received)
+            _report_objective(result)
+        except KaiError as error:
+            typer.secho(f"{type(error).__name__}: {error}", fg="red", err=True)
+            raise typer.Exit(code=1) from error
+        finally:
+            await container.aclose()
+
+    asyncio.run(_run())
+
+
+@app.command()
+def objectives() -> None:
+    """What has been asked of KAI here, newest first."""
+
+    async def _run() -> None:
+        container = build_container()
+        try:
+            recent = await container.objective_repository.list_recent(limit=20)
+            if not recent:
+                typer.echo("Nothing has been asked yet.")
+                return
+            for item in recent:
+                colour = {"DONE": "green", "FAILED": "red", "ESCALATED": "yellow"}.get(
+                    item.status.value, "white"
+                )
+                typer.secho(f"{item.status.value:<10}", fg=colour, nl=False)
+                typer.echo(f"{item.id}  {item.text[:70]}")
+        except StorageNotInitializedError as error:
+            typer.secho(f"{error} Run: uv run alembic upgrade head", fg="red", err=True)
+            raise typer.Exit(code=1) from error
+        finally:
+            await container.aclose()
+
+    asyncio.run(_run())
 
 
 @app.command(name="run-task")
@@ -417,6 +471,33 @@ def _resolve(approval_id: str, decision: ApprovalState, comment: str) -> None:
             await container.aclose()
 
     asyncio.run(_run())
+
+
+def _report_objective(result) -> None:
+    from domain.workforce.protocols import ObjectiveStatus
+
+    colour = {
+        ObjectiveStatus.DONE: "green",
+        ObjectiveStatus.FAILED: "red",
+        ObjectiveStatus.ESCALATED: "yellow",
+    }.get(result.status, "white")
+
+    typer.echo(f"\n{result.summary}")
+    if result.missing:
+        typer.secho("\nStill missing:", fg="yellow")
+        for item in result.missing:
+            typer.echo(f"  - {item}")
+
+    tasks = result.output.get("tasks") or []
+    if tasks:
+        # Who did what, so the answer can be checked rather than believed.
+        typer.echo("")
+        for task in tasks:
+            typer.secho(f"  {task['employee']:<12}", fg="cyan", nl=False)
+            typer.echo(f"{task['status']:<10} {task['goal'][:60]}")
+
+    typer.secho(f"\n[{result.status.value}] {result.objective_id}", fg=colour)
+    typer.echo(f"cost: ${result.cost_usd:.6f}")
 
 
 def _report(task) -> None:

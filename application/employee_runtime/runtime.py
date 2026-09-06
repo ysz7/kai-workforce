@@ -8,6 +8,13 @@ design exists to prevent.
 The stages are: plan, execute, verify - and verify can send the work back once.
 State is written to the task after every stage and after every step inside
 execution, which is what lets a killed process pick the task up again.
+
+One thing the runtime does with an assignment is worth naming: a delegator may
+*narrow* what the employee may use for this task, and the runtime applies that
+by intersecting it with the declaration. Narrowing works; widening cannot, since
+the intersection can only ever shrink. Delegation therefore never escalates
+privileges, and that is a property of this code rather than of the manager's
+good behaviour.
 """
 
 from __future__ import annotations
@@ -77,16 +84,40 @@ class EmployeeRuntime:
             raise TaskNotFoundError(assignment.task_id)
         return await self.run(task, assignment)
 
+    def _effective(self, assignment: TaskAssignment | None) -> EmployeeDefinition:
+        """The declaration as it applies to this one assignment.
+
+        `granted_tools` is what the delegator meant to allow. Intersecting is
+        the whole mechanism: a manager can hand down less than the employee is
+        trusted with and can never hand down more, whatever it puts in the
+        assignment. An assignment that says nothing narrows nothing.
+        """
+        if assignment is None:
+            return self._definition
+        granted = assignment.context.data.get("granted_tools")
+        if not isinstance(granted, list | tuple | set | frozenset):
+            return self._definition
+        narrowed = self._definition.allowed_tools & frozenset(str(name) for name in granted)
+        if narrowed == self._definition.allowed_tools:
+            return self._definition
+        log.info(
+            "assignment.narrowed",
+            employee=self._definition.name,
+            withheld=sorted(self._definition.allowed_tools - narrowed),
+        )
+        return replace(self._definition, allowed_tools=narrowed)
+
     async def run(self, task: Task, assignment: TaskAssignment | None = None) -> TaskResult:
         """Carry the task from wherever it is to a terminal state."""
         state = RunState.from_state(task.execution.state)
-        logger = log.bind(task_id=str(task.id), employee=self._definition.name)
+        definition = self._effective(assignment)
+        logger = log.bind(task_id=str(task.id), employee=definition.name)
 
         while state.stage != STAGE_DONE:
             if state.stage == STAGE_PLANNING:
-                task, state = await self._plan(task, state, assignment)
+                task, state = await self._plan(task, state, assignment, definition)
             elif state.stage == STAGE_EXECUTING:
-                task, state, result, outcome = await self._execute(task, state)
+                task, state, result, outcome = await self._execute(task, state, definition)
                 # A deliberate stop skips verification: nobody claimed the
                 # work was finished, so there is nothing to check it against.
                 if outcome.cancelled:
@@ -105,7 +136,11 @@ class EmployeeRuntime:
     # --- Stages ---------------------------------------------------------------
 
     async def _plan(
-        self, task: Task, state: RunState, assignment: TaskAssignment | None
+        self,
+        task: Task,
+        state: RunState,
+        assignment: TaskAssignment | None,
+        definition: EmployeeDefinition,
     ) -> tuple[Task, RunState]:
         if task.status is not TaskStatus.PLANNING:
             task, event = task.transition_to(TaskStatus.PLANNING)
@@ -115,8 +150,8 @@ class EmployeeRuntime:
         try:
             plan = await self._deps.planner.plan(
                 task,
-                self._definition,
-                tools=self._deps.tools.list_specs(self._definition),
+                definition,
+                tools=self._deps.tools.list_specs(definition),
                 context=assignment.context if assignment else None,
             )
         except PlanningError as error:
@@ -128,13 +163,12 @@ class EmployeeRuntime:
         transcript = Transcript(
             messages=Executor.opening_messages(
                 task,
-                self._definition,
+                definition,
                 plan,
                 self._deps.system_prompt,
                 state.verifier_feedback,
                 interfaces=tuple(
-                    spec.interface_level
-                    for spec in self._deps.tools.list_specs(self._definition)
+                    spec.interface_level for spec in self._deps.tools.list_specs(definition)
                 ),
             ),
             cost_usd=state.transcript.cost_usd,
@@ -153,7 +187,7 @@ class EmployeeRuntime:
         return task, state
 
     async def _execute(
-        self, task: Task, state: RunState
+        self, task: Task, state: RunState, definition: EmployeeDefinition
     ) -> tuple[Task, RunState, TaskResult, StepOutcome]:
         current = task
 
@@ -169,7 +203,7 @@ class EmployeeRuntime:
             await self._deps.tasks.save(current)
 
         outcome = await self._deps.executor.run(
-            task, self._definition, state.transcript, on_step=persist
+            task, definition, state.transcript, on_step=persist
         )
         state = replace(state, transcript=outcome.transcript, stage=STAGE_VERIFYING)
         result = TaskResult(

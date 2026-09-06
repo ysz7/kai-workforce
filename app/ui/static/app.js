@@ -3,6 +3,12 @@
    that would be a second thing to install on a machine whose selling point is
    that it needs nothing installed.
 
+   Since Phase 7 what the page submits is an objective, not a task: the user
+   states an outcome and KAI decides what that takes and who does it. The trace
+   below it is the manager's own progress interleaved with that of every task it
+   started, which the server merges - the page does not have to know that the
+   two come from different places.
+
    Two rules keep it honest.
 
    The trace is appended from the stream, never re-rendered from a poll: what
@@ -17,7 +23,7 @@
 const el = (id) => document.getElementById(id);
 
 const state = {
-  selected: null,   // the task whose trace is on screen
+  selected: null,   // the objective whose trace is on screen
   stream: null,     // the EventSource for it
 };
 
@@ -38,31 +44,28 @@ async function api(path, options = {}) {
 // --- Starting work ----------------------------------------------------------
 
 async function loadEmployees() {
+  // Named, not chosen: who exists is worth seeing, but picking one is the
+  // manager's job now, and a dropdown would invite the user to do it instead.
   const { employees } = await api("/api/employees");
-  const select = el("employee");
-  select.innerHTML = "";
-  for (const employee of employees) {
-    const option = document.createElement("option");
-    option.value = employee.name;
-    option.textContent = `${employee.name} - ${employee.title}`;
-    select.append(option);
-  }
+  el("workforce").textContent = employees.length
+    ? `Available: ${employees.map((e) => e.name).join(", ")}.`
+    : "Nobody is declared yet - add one under employees/.";
   el("run").disabled = employees.length === 0;
 }
 
-el("new-task").addEventListener("submit", async (event) => {
+el("new-objective").addEventListener("submit", async (event) => {
   event.preventDefault();
   const error = el("form-error");
   error.hidden = true;
   el("run").disabled = true;
   try {
-    const task = await api("/api/tasks", {
+    const objective = await api("/api/objectives", {
       method: "POST",
-      body: JSON.stringify({ goal: el("goal").value, employee: el("employee").value }),
+      body: JSON.stringify({ request: el("request").value }),
     });
-    el("goal").value = "";
+    el("request").value = "";
     await refreshHistory();
-    select(task.id);
+    select(objective.id);
   } catch (failure) {
     error.textContent = failure.message;
     error.hidden = false;
@@ -74,64 +77,92 @@ el("new-task").addEventListener("submit", async (event) => {
 // --- History ----------------------------------------------------------------
 
 async function refreshHistory() {
-  const { tasks } = await api("/api/tasks");
+  const { objectives } = await api("/api/objectives");
   const list = el("history");
   list.innerHTML = "";
-  for (const task of tasks) {
-    const item = document.createElement("li");
-    item.className = task.id === state.selected ? "selected" : "";
-    item.innerHTML = `<span class="goal"></span>
-      <span class="sub"><span class="status status-${task.status}"></span>
-      &middot; ${task.step} steps &middot; $${task.cost_usd.toFixed(4)}</span>`;
-    item.querySelector(".goal").textContent = task.goal;
-    item.querySelector(".status").textContent = task.running ? "RUNNING" : task.status;
-    item.addEventListener("click", () => select(task.id));
-    list.append(item);
+  for (const item of objectives) {
+    const node = document.createElement("li");
+    node.className = item.id === state.selected ? "selected" : "";
+    node.innerHTML = `<span class="goal"></span>
+      <span class="sub"><span class="status status-${item.status}"></span>
+      &middot; $${item.cost_usd.toFixed(4)}</span>`;
+    node.querySelector(".goal").textContent = item.text;
+    node.querySelector(".status").textContent = item.thinking ? "WORKING" : item.status;
+    node.addEventListener("click", () => select(item.id));
+    list.append(node);
   }
 }
 
 // --- One run ----------------------------------------------------------------
 
-async function select(taskId) {
-  state.selected = taskId;
+async function select(objectiveId) {
+  state.selected = objectiveId;
   if (state.stream) state.stream.close();
   el("trace").innerHTML = "";
 
-  const task = await api(`/api/tasks/${taskId}`);
-  drawHeader(task);
-  // A finished run is drawn from what was stored; a live one from what the
-  // server buffered and is still announcing. Drawing both would show every
-  // tool call of a running task twice, and the stream is the better of the two
-  // while it lasts - it carries the plan and the observations, not just the
-  // calls.
-  if (!task.running) for (const call of task.calls) drawStoredCall(call);
+  const objective = await api(`/api/objectives/${objectiveId}`);
+  drawHeader(objective);
+  drawPlans(objective);
   await refreshHistory();
 
-  state.stream = new EventSource(`/api/events?task=${taskId}`);
+  // The server replays what it has buffered for this objective and for every
+  // task in its plan, then follows both. A finished objective's stream ends on
+  // its own after the replay.
+  state.stream = new EventSource(`/api/events?objective=${objectiveId}`);
   state.stream.onmessage = (message) => onProgress(JSON.parse(message.data));
 }
 
-function drawHeader(task) {
-  el("run-goal").textContent = task.goal;
-  const status = task.running ? "RUNNING" : task.status;
-  el("run-meta").innerHTML = `<span class="status status-${task.status}"></span>
-    &middot; ${task.employee || "unassigned"} &middot; ${task.step} steps
-    &middot; $${task.cost_usd.toFixed(6)}`;
+function drawHeader(objective) {
+  el("run-goal").textContent = objective.text;
+  const status = objective.thinking ? "WORKING" : objective.status;
+  el("run-meta").innerHTML = `<span class="status status-${objective.status}"></span>
+    &middot; $${objective.cost_usd.toFixed(6)}`;
   el("run-meta").querySelector(".status").textContent = status;
-  el("cancel").hidden = task.status === "COMPLETED" || task.status === "FAILED"
-    || task.status === "CANCELLED";
+  el("cancel").hidden = !objective.thinking;
 
   const result = el("run-result");
-  if (task.error) {
+  const answer = objective.result;
+  if (answer && answer.summary) {
     result.hidden = false;
-    result.className = "failed";
-    result.textContent = `${task.error.kind}: ${task.error.message}`;
-  } else if (task.result && task.result.summary) {
-    result.hidden = false;
-    result.className = "";
-    result.textContent = task.result.summary;
+    result.className = objective.status === "DONE" ? "" : "failed";
+    result.textContent = answer.summary;
+    if (answer.missing && answer.missing.length) {
+      const missing = document.createElement("ul");
+      missing.className = "criteria";
+      for (const item of answer.missing) {
+        const line = document.createElement("li");
+        line.className = "unmet";
+        line.textContent = item;
+        missing.append(line);
+      }
+      result.append(missing);
+    }
   } else {
     result.hidden = true;
+  }
+}
+
+function drawPlans(objective) {
+  const holder = el("run-plan");
+  holder.innerHTML = "";
+  holder.hidden = !objective.plans.length;
+  // Newest revision first, and the superseded ones are kept on screen: what
+  // KAI tried the first time is why there was a second time.
+  for (const plan of objective.plans) {
+    const node = document.createElement("div");
+    node.className = `plan${plan.status === "SUPERSEDED" ? " superseded" : ""}`;
+    node.innerHTML = `<p class="why"></p><ol></ol>`;
+    node.querySelector(".why").textContent =
+      `Plan ${plan.revision} (${plan.status})` + (plan.rationale ? ` - ${plan.rationale}` : "");
+    const list = node.querySelector("ol");
+    for (const task of plan.tasks) {
+      const line = document.createElement("li");
+      line.innerHTML = `<span class="goal"></span> <span class="task-status"></span>`;
+      line.querySelector(".goal").textContent = task.goal;
+      line.querySelector(".task-status").textContent = task.status;
+      list.append(line);
+    }
+    holder.append(node);
   }
 }
 
@@ -139,10 +170,7 @@ el("cancel").addEventListener("click", async () => {
   if (!state.selected) return;
   el("cancel").disabled = true;
   try {
-    await api(`/api/tasks/${state.selected}/cancel`, {
-      method: "POST",
-      body: JSON.stringify({ reason: "Stopped from the interface." }),
-    });
+    await api(`/api/objectives/${state.selected}/cancel`, { method: "POST" });
   } finally {
     el("cancel").disabled = false;
   }
@@ -160,19 +188,6 @@ function line({ step, kind, message, failed, interfaceLevel }) {
   item.scrollIntoView({ block: "nearest" });
 }
 
-function drawStoredCall(call) {
-  const args = Object.entries(call.arguments || {})
-    .map(([key, value]) => `${key}=${JSON.stringify(value)}`)
-    .join(", ");
-  line({
-    step: 0,
-    kind: "TOOL_CALL",
-    interfaceLevel: call.interface,
-    message: `${call.tool}(${args})${call.error ? ` - ${call.error}` : ""}`,
-    failed: !call.success,
-  });
-}
-
 // --- The stream -------------------------------------------------------------
 
 function onProgress(event) {
@@ -188,7 +203,8 @@ function onProgress(event) {
     refreshApprovals();
     refreshSpend();
   }
-  if (event.kind === "RESULT" && state.stream) {
+  if (event.kind === "PLAN") refreshTask();
+  if (event.kind === "RESULT" && event.objective_id && state.stream) {
     // The server ends the stream when the task ends. Closing it here too is
     // what stops EventSource from treating that as a dropped connection and
     // reconnecting to a run that has nothing left to say.
@@ -199,7 +215,9 @@ function onProgress(event) {
 
 async function refreshTask() {
   if (!state.selected) return;
-  drawHeader(await api(`/api/tasks/${state.selected}`));
+  const objective = await api(`/api/objectives/${state.selected}`);
+  drawHeader(objective);
+  drawPlans(objective);
   await refreshHistory();
 }
 
@@ -253,7 +271,7 @@ async function start() {
   all.onmessage = (message) => {
     const event = JSON.parse(message.data);
     if (event.kind === "APPROVAL") refreshApprovals();
-    if (event.kind === "RESULT" && event.task_id !== state.selected) refreshHistory();
+    if (event.kind === "RESULT" && event.objective_id !== state.selected) refreshHistory();
   };
 }
 
